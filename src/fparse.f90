@@ -47,6 +47,13 @@
 !  retrieved using [[fparser:get_derivative]]. The derivative of an output of size `m`
 !  with respect to a variable of size `n` is a matrix of shape `[m, n]`.
 !  When `wrt` is not given, no derivative computations are performed.
+!
+!### Dependencies
+!
+!  The dependencies between the variables can be queried after parsing
+!  ([[fparser:get_dependencies]], [[fparser:get_dependents]], [[fparser:depends_on]],
+!  [[fparser:dependency_matrix]]), and the dependency graph can be exported for other
+!  tools (Graphviz DOT, JSON, GraphML or Mermaid) using [[fparser:export_dependencies]].
 
 module fparse
 
@@ -54,6 +61,7 @@ use fparse_bytecode
 use fparse_common
 use fparse_eval
 use fparse_functions
+use fparse_graph
 use fparse_parser
 
 implicit none (type, external)
@@ -96,6 +104,7 @@ type, public :: fparser
     type(string_t), dimension(:), allocatable :: names !! all variable names (inputs, then outputs).
                                                         !! Anonymous outputs have empty names.
     type(string_t), dimension(:), allocatable :: expressions !! the expression strings
+    type(string_t), dimension(:), allocatable :: rhs !! the expressions, without the output names
     type(expr_tree), dimension(:), allocatable :: trees !! the parsed expressions
     type(scalar_program), dimension(:), allocatable :: progs !! the expressions compiled for fast
                                                              !! scalar evaluation
@@ -149,6 +158,11 @@ contains
     procedure, public :: input_name
     procedure, public :: output_name
     procedure, public :: evaluation_order
+    generic, public :: get_dependencies => get_dependencies_by_name, get_dependencies_by_index
+    procedure, public :: get_dependents
+    procedure, public :: depends_on
+    procedure, public :: dependency_matrix
+    procedure, public :: export_dependencies
     procedure, public :: set_domain_checking
     procedure, public :: set_scalar_optimization
     procedure, public :: set_sparsity
@@ -158,6 +172,7 @@ contains
     procedure :: get_scalar_by_name, get_vector_by_name, get_scalar_by_index, get_vector_by_index
     procedure :: get_derivative_matrix_by_name, get_derivative_scalar_by_name
     procedure :: get_derivative_matrix_by_index, get_derivative_scalar_by_index
+    procedure :: get_dependencies_by_name, get_dependencies_by_index
     procedure :: set_value
     procedure :: find_variable
     procedure :: find_output
@@ -423,6 +438,7 @@ subroutine parse(me, variables, expressions, names, status, errmsg)
     me%nd = 0
     if (allocated(me%names)) deallocate(me%names)
     if (allocated(me%expressions)) deallocate(me%expressions)
+    if (allocated(me%rhs)) deallocate(me%rhs)
     if (allocated(me%trees)) deallocate(me%trees)
     if (allocated(me%progs)) deallocate(me%progs)
     if (allocated(me%expr_pure)) deallocate(me%expr_pure)
@@ -442,7 +458,7 @@ subroutine parse(me, variables, expressions, names, status, errmsg)
     nout = size(expressions)
     me%n_inputs = nin
     me%n_outputs = nout
-    allocate(me%names(nin + nout), me%expressions(nout), rhs_list(nout), offsets(nout))
+    allocate(me%names(nin + nout), me%expressions(nout), me%rhs(nout), rhs_list(nout), offsets(nout))
 
     main: block
 
@@ -490,6 +506,7 @@ subroutine parse(me, variables, expressions, names, status, errmsg)
             end if
             me%names(nin + i)%str = name
             rhs_list(i)%str = rhs
+            me%rhs(i)%str = trim(adjustl(rhs))
             offsets(i) = offset
         end do
 
@@ -1678,6 +1695,351 @@ pure function evaluation_order(me) result(order)
         allocate(order(0))
     end if
 end function evaluation_order
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Get the variables that an expression (by index) depends on.
+!
+!  The direct dependencies are the variables that appear in the expression.
+!  If `indirect` is true, the variables that they depend on (through the other
+!  expressions) are also included.
+
+subroutine get_dependencies_by_index(me, iexpr, inputs, outputs, indirect, status, errmsg)
+
+    class(fparser), intent(inout) :: me !! the parser
+    integer, intent(in) :: iexpr !! the expression index
+    integer, dimension(:), allocatable, intent(out) :: inputs !! indices of the input variables that the
+                                                              !! expression depends on (in increasing order)
+    integer, dimension(:), allocatable, intent(out) :: outputs !! indices of the expressions whose outputs
+                                                               !! it depends on (in increasing order)
+    logical, intent(in), optional :: indirect !! also include the indirect dependencies (default false)
+    integer, intent(out), optional :: status !! status code (0 if no errors)
+    character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
+
+    if (me%err%failed) call me%err%clear()
+    allocate(inputs(0), outputs(0))
+    if (check_parsed(me)) then
+        if (iexpr < 1 .or. iexpr > me%n_outputs) then
+            call me%err%set('invalid expression index '//int_to_str(iexpr))
+        else
+            call split_variables(me, variable_dependencies(me, me%n_inputs + iexpr, opt_false(indirect)), &
+                                 inputs, outputs)
+        end if
+    end if
+    call finish(me, status, errmsg)
+
+end subroutine get_dependencies_by_index
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Get the variables that a variable (by name) depends on.
+!  See [[fparser:get_dependencies_by_index]]. An input variable has no dependencies.
+
+subroutine get_dependencies_by_name(me, name, inputs, outputs, indirect, status, errmsg)
+
+    class(fparser), intent(inout) :: me !! the parser
+    character(len=*), intent(in) :: name !! variable name (an output, or an input; case insensitive)
+    integer, dimension(:), allocatable, intent(out) :: inputs !! indices of the input variables that the
+                                                              !! variable depends on (in increasing order)
+    integer, dimension(:), allocatable, intent(out) :: outputs !! indices of the expressions whose outputs
+                                                               !! it depends on (in increasing order)
+    logical, intent(in), optional :: indirect !! also include the indirect dependencies (default false)
+    integer, intent(out), optional :: status !! status code (0 if no errors)
+    character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
+
+    integer :: idx
+
+    if (me%err%failed) call me%err%clear()
+    allocate(inputs(0), outputs(0))
+    if (check_parsed(me)) then
+        idx = find_output(me, name)
+        if (.not. me%err%failed) then
+            call split_variables(me, variable_dependencies(me, idx, opt_false(indirect)), inputs, outputs)
+        end if
+    end if
+    call finish(me, status, errmsg)
+
+end subroutine get_dependencies_by_name
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Get the expressions that depend on a variable: the expressions that reference it
+!  and, if `indirect` is true, the expressions that depend on those (and so on).
+!  These are the expressions that must be recomputed when the variable changes.
+
+subroutine get_dependents(me, name, outputs, indirect, status, errmsg)
+
+    class(fparser), intent(inout) :: me !! the parser
+    character(len=*), intent(in) :: name !! variable name (an input, or an output; case insensitive)
+    integer, dimension(:), allocatable, intent(out) :: outputs !! indices of the expressions that depend
+                                                               !! on the variable (in increasing order)
+    logical, intent(in), optional :: indirect !! also include the indirect dependents (default false)
+    integer, intent(out), optional :: status !! status code (0 if no errors)
+    character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
+
+    integer :: idx, i
+
+    if (me%err%failed) call me%err%clear()
+    allocate(outputs(0))
+    if (check_parsed(me)) then
+        idx = find_output(me, name)
+        if (.not. me%err%failed) then
+            outputs = pack([(i, i = 1, me%n_outputs)], variable_dependents(me, idx, opt_false(indirect)))
+        end if
+    end if
+    call finish(me, status, errmsg)
+
+end subroutine get_dependents
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Returns true if a variable depends on another variable: directly (it appears
+!  in its expression) or, if `indirect` is true, also through the other expressions.
+!  Returns false (and raises an error) if either variable is unknown.
+
+logical function depends_on(me, name, wrt, indirect) result(dep)
+
+    class(fparser), intent(inout) :: me !! the parser
+    character(len=*), intent(in) :: name !! variable name (an output, or an input; case insensitive)
+    character(len=*), intent(in) :: wrt !! the name of the variable that it may depend on (case insensitive)
+    logical, intent(in), optional :: indirect !! also check the indirect dependencies (default false)
+
+    integer :: idx, jdx
+    logical, dimension(:), allocatable :: deps
+
+    dep = .false.
+    if (me%err%failed) call me%err%clear()
+    if (.not. check_parsed(me)) return
+    idx = find_output(me, name)
+    if (me%err%failed) return
+    jdx = find_output(me, wrt)
+    if (me%err%failed) return
+    deps = variable_dependencies(me, idx, opt_false(indirect))
+    dep = deps(jdx)
+
+end function depends_on
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  The dependency matrix of all the expressions: `dep(i, j)` is true if expression `i`
+!  depends on variable `j`, where `j = 1, ..., num_inputs()` are the input variables,
+!  and `j = num_inputs() + k` is the output of expression `k`.
+!
+!  With `indirect=.true.`, `dep(:, 1:num_inputs())` is the structural sparsity pattern
+!  of the jacobian of the outputs with respect to the inputs.
+
+subroutine dependency_matrix(me, dep, indirect, status, errmsg)
+
+    class(fparser), intent(inout) :: me !! the parser
+    logical, dimension(:,:), allocatable, intent(out) :: dep !! the dependency matrix, with shape
+                                                             !! `[num_outputs(), num_inputs() + num_outputs()]`
+    logical, intent(in), optional :: indirect !! also include the indirect dependencies (default false)
+    integer, intent(out), optional :: status !! status code (0 if no errors)
+    character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
+
+    integer :: k, e, r, j, nin
+
+    if (me%err%failed) call me%err%clear()
+    if (check_parsed(me)) then
+        nin = me%n_inputs
+        allocate(dep(me%n_outputs, nin + me%n_outputs), source=.false.)
+        ! in the evaluation order, so the rows of the outputs it references are complete:
+        do k = 1, me%n_outputs
+            e = me%order(k)
+            do r = 1, size(me%trees(e)%refs)
+                j = me%trees(e)%refs(r)
+                dep(e, j) = .true.
+                if (opt_false(indirect) .and. j > nin) dep(e, :) = dep(e, :) .or. dep(j - nin, :)
+            end do
+        end do
+    else
+        allocate(dep(0, 0))
+    end if
+    call finish(me, status, errmsg)
+
+end subroutine dependency_matrix
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Export the dependency graph of the expressions, in a format that can be read by
+!  other tools. The nodes are the variables (inputs and outputs), and there is an edge
+!  from each variable to each expression that references it. The formats are:
+!
+!  * `dot`: the [Graphviz](https://graphviz.org) DOT language.
+!  * `json`: the node-link format of [NetworkX](https://networkx.org) and D3.js.
+!  * `graphml`: [GraphML](http://graphml.graphdrawing.org).
+!  * `mermaid`: a [Mermaid](https://mermaid.js.org) flowchart.
+!
+!  In the `dot`, `json` and `graphml` formats, the node identifiers are the variable
+!  names, and `#k` for the anonymous output of expression `k`. The `json` and
+!  `graphml` nodes also have the attributes `kind` (`input` or `output`), `index`
+!  (of the input variable or of the expression), `name`, and for the outputs,
+!  `expression` and `order` (the position in the evaluation order).
+!  See [[fparse_graph]].
+
+subroutine export_dependencies(me, format, str, status, errmsg)
+
+    class(fparser), intent(inout) :: me !! the parser
+    character(len=*), intent(in) :: format !! `dot`, `json`, `graphml` or `mermaid` (case insensitive)
+    character(len=:), allocatable, intent(out) :: str !! the exported graph
+    integer, intent(out), optional :: status !! status code (0 if no errors)
+    character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
+
+    type(dependency_graph) :: g
+    integer :: i, k, e, nin, nedges
+    logical :: ok
+
+    if (me%err%failed) call me%err%clear()
+    str = ''
+    if (check_parsed(me)) then
+        nin = me%n_inputs
+        allocate(g%nodes(nin + me%n_outputs))
+        do i = 1, nin
+            g%nodes(i) = graph_node(node_input, i, me%names(i)%str, '', 0)
+        end do
+        do k = 1, me%n_outputs
+            e = me%order(k)
+            g%nodes(nin + e) = graph_node(node_output, e, me%names(nin + e)%str, me%rhs(e)%str, k)
+        end do
+        nedges = sum([(size(me%trees(e)%refs), e = 1, me%n_outputs)])
+        allocate(g%edges(2, nedges))
+        i = 0
+        do e = 1, me%n_outputs
+            do k = 1, size(me%trees(e)%refs)
+                i = i + 1
+                g%edges(:, i) = [me%trees(e)%refs(k), nin + e]
+            end do
+        end do
+        call export_graph(g, format, str, ok)
+        if (.not. ok) call me%err%set('unknown dependency export format "'//trim(format)//&
+                                      '" (must be dot, json, graphml or mermaid)')
+    end if
+    call finish(me, status, errmsg)
+
+end subroutine export_dependencies
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  The variables (in the full variable list) that a variable depends on.
+!  An input variable has no dependencies.
+
+function variable_dependencies(me, idx, indirect) result(dep)
+
+    class(fparser), intent(in) :: me !! the parser
+    integer, intent(in) :: idx !! index of the variable in the full variable list
+    logical, intent(in) :: indirect !! also include the indirect dependencies
+    logical, dimension(:), allocatable :: dep !! if the variable depends on each variable
+
+    integer, dimension(:), allocatable :: stack
+    integer :: n, e, r, j, nin
+
+    nin = me%n_inputs
+    allocate(dep(nin + me%n_outputs), source=.false.)
+    if (idx <= nin) return
+    allocate(stack(me%n_outputs))
+    n = 1
+    stack(1) = idx - nin
+    do while (n > 0)
+        e = stack(n)
+        n = n - 1
+        do r = 1, size(me%trees(e)%refs)
+            j = me%trees(e)%refs(r)
+            if (dep(j)) cycle
+            dep(j) = .true.
+            if (indirect .and. j > nin) then
+                n = n + 1
+                stack(n) = j - nin
+            end if
+        end do
+    end do
+
+end function variable_dependencies
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  The expressions that depend on a variable (in the full variable list).
+
+function variable_dependents(me, idx, indirect) result(used)
+
+    class(fparser), intent(in) :: me !! the parser
+    integer, intent(in) :: idx !! index of the variable in the full variable list
+    logical, intent(in) :: indirect !! also include the indirect dependents
+    logical, dimension(:), allocatable :: used !! if each expression depends on the variable
+
+    logical, dimension(:), allocatable :: marked
+    integer :: k, e, nin
+
+    nin = me%n_inputs
+    allocate(used(me%n_outputs), source=.false.)
+    allocate(marked(nin + me%n_outputs), source=.false.)
+    marked(idx) = .true.
+    ! in the evaluation order, so the outputs that an expression references are already marked:
+    do k = 1, me%n_outputs
+        e = me%order(k)
+        if (any(marked(me%trees(e)%refs))) then
+            used(e) = .true.
+            if (indirect) marked(nin + e) = .true.
+        end if
+    end do
+
+end function variable_dependents
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Split a set of variables (in the full variable list) into the input variable
+!  indices and the expression indices.
+
+subroutine split_variables(me, vars, inputs, outputs)
+
+    class(fparser), intent(in) :: me !! the parser
+    logical, dimension(:), intent(in) :: vars !! if each variable is in the set
+    integer, dimension(:), allocatable, intent(out) :: inputs !! the input variable indices
+    integer, dimension(:), allocatable, intent(out) :: outputs !! the expression indices
+
+    integer :: i, nin
+
+    nin = me%n_inputs
+    inputs = pack([(i, i = 1, nin)], vars(1:nin))
+    outputs = pack([(i, i = 1, me%n_outputs)], vars(nin+1:))
+
+end subroutine split_variables
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Returns true if the expressions have been parsed, or raises an error.
+
+logical function check_parsed(me) result(ok)
+
+    class(fparser), intent(inout) :: me !! the parser
+
+    ok = me%parsed
+    if (.not. ok) call me%err%set('the expressions have not been parsed')
+
+end function check_parsed
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  The value of an optional logical argument, or false if it is not present.
+
+pure logical function opt_false(arg)
+
+    logical, intent(in), optional :: arg !! the optional argument
+
+    opt_false = .false.
+    if (present(arg)) opt_false = arg
+
+end function opt_false
 !*****************************************************************************************
 
 !*****************************************************************************************

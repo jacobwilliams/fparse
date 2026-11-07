@@ -24,6 +24,8 @@ test-drive = { git = "https://github.com/fortran-lang/test-drive", tag = "v0.6.1
 fortran_function_parser = { git = "https://github.com/jacobwilliams/fortran_function_parser", tag = "1.1.0" }
 feq-parse = { git = "https://github.com/FluidNumerics/feq-parse", rev = "2e80c5940b128a52c5070a3f56909674fb85a379" }
 M_calculator = { git = "https://github.com/urbanjost/M_calculator", tag = "v1.0.1" }
+# graph layout (used only by the dependency_graph example):
+fdot = { git = "https://github.com/jacobwilliams/fdot.git", tag = "0.2.0" }
 
 [extra.ford]
 project = "fparse"

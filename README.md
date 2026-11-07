@@ -17,6 +17,7 @@ A Fortran function parser and evaluator for expressions involving multiple varia
 * **User-defined functions** with any number of arguments, declared as pure or impure. You can supply a derivative routine for each one; if you don't, finite differences are used.
 * **Optional first derivatives** with respect to any of the input variables, using forward-mode automatic differentiation. Depending on the sizes involved, a derivative is a scalar, a vector or a matrix (Jacobian). Derivatives are computed only when you ask for them, so they don't slow down normal evaluation. Derivatives that the structure of the expressions shows are zero are skipped.
 * **Caching:** only the expressions whose inputs have changed since the last evaluation are recomputed. The others keep their previous results.
+* **Dependency queries:** find the variables an expression depends on, or the expressions that depend on a variable, directly or through other expressions, or get the full dependency matrix. You can export the dependency graph as Graphviz DOT, JSON (NetworkX/D3 node-link), GraphML or Mermaid.
 * **Error checking.**
   * At parse time: syntax errors, undefined variables and functions, wrong argument counts, and invalid or duplicate names.
   * At runtime: division by zero, domain errors, size mismatches, out-of-bounds indexes, and unset variables.
@@ -117,6 +118,42 @@ The optional derivative routine (interface `fparse_dfunc`) returns the Jacobian 
 
 An expression that calls an impure function is recomputed on every `evaluate`, and so is any expression that depends on it. The rest are unaffected. Setting an input to the value it already has doesn't count as a change. The cache is cleared by `parse`, by `add_function`, and by changing the domain-checking, scalar-optimization or sparsity options. To turn it off, use `p%set_caching(.false.)`.
 
+#### Dependencies
+
+You can query the dependencies between the variables after `parse`. A direct dependency is a variable that appears in the expression. With `indirect=.true.`, the variables that those depend on, through other expressions, are included too.
+
+```fortran-free-form
+integer, dimension(:), allocatable :: inputs, outputs
+logical, dimension(:,:), allocatable :: dep
+character(len=:), allocatable :: dot
+
+call p%parse(['x', 'y'], ['x*y   ', 'a + 1 ', 'sin(x)'], names=['a', 'b', 'c'])
+
+call p%get_dependencies('b', inputs, outputs)                  ! inputs = [],    outputs = [1] (a)
+call p%get_dependencies('b', inputs, outputs, indirect=.true.) ! inputs = [1,2], outputs = [1]
+call p%get_dependents('x', outputs, indirect=.true.)           ! outputs = [1,2,3]: recomputed if x changes
+if (p%depends_on('b', 'y', indirect=.true.)) print *, 'b depends on y'
+call p%dependency_matrix(dep, indirect=.true.)                 ! dep(i,j): expression i depends on variable j
+call p%export_dependencies('dot', dot)                         ! the graph, in the DOT language
+```
+
+Inputs are identified by their index in the list of input variables, and outputs by their expression index. `get_dependencies` also accepts an expression index instead of a name, for anonymous expressions. In the dependency matrix, the columns are the inputs followed by the outputs. With `indirect=.true.`, its input columns give the structural sparsity pattern of the Jacobian of the outputs with respect to the inputs.
+
+`export_dependencies` writes the dependency graph in a format that other tools can read. The nodes are the variables, and each edge goes from a variable to an expression that references it.
+
+| Format | Read by |
+|---|---|
+| `dot` | Graphviz, and most graph tools |
+| `json` | NetworkX (`node_link_graph`), D3.js |
+| `graphml` | yEd, Gephi, Cytoscape, NetworkX, igraph |
+| `mermaid` | Mermaid, and GitHub markdown |
+
+The node identifiers are the variable names, or `#k` for the anonymous output of expression `k`. The JSON and GraphML nodes also have the attributes `kind` (`input` or `output`), `index`, `name`, and, for the outputs, `expression` and `order` (the position in the evaluation order).
+
+[example/dependency_graph.f90](example/dependency_graph.f90) builds the graph below from the dependency queries, using the [fdot](https://github.com/jacobwilliams/fdot) layout library. The equations compute the classical orbital elements from a position and velocity vector. The inputs are blue, the intermediate outputs are gray, and the final outputs, which no other expression uses, are green.
+
+![Dependency graph of the orbital element equations](media/dependency_graph.svg)
+
 ### Building and testing
 
 With [pixi](https://pixi.sh):
@@ -125,6 +162,7 @@ With [pixi](https://pixi.sh):
 pixi run build     # fpm build
 pixi run test      # fpm test
 pixi run example   # run example/example.f90
+pixi run dependency-graph # run example/dependency_graph.f90 and update the graph above
 pixi run docs      # FORD documentation in ./doc
 pixi run benchmark # run the speed benchmarks and update the table below
 pixi run benchmark-sparsity # compare derivatives with sparsity on and off
