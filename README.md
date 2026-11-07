@@ -150,7 +150,34 @@ Inputs are identified by their index in the list of input variables, and outputs
 
 The node identifiers are the variable names, or `#k` for the anonymous output of expression `k`. The JSON and GraphML nodes also have the attributes `kind` (`input` or `output`), `index`, `name`, and, for the outputs, `expression` and `order` (the position in the evaluation order).
 
-[example/dependency_graph.f90](example/dependency_graph.f90) builds the graph below from the dependency queries, using the [fdot](https://github.com/jacobwilliams/fdot) layout library. The equations compute the classical orbital elements from a position and velocity vector. The inputs are blue, the intermediate outputs are gray, and the final outputs, which no other expression uses, are green.
+[example/dependency_graph.f90](example/dependency_graph.f90) builds the graph below from the dependency queries, using the [fdot](https://github.com/jacobwilliams/fdot) layout library. The equations compute the classical orbital elements from a position and velocity vector. The inputs are the position `r` [km], the velocity `v` [km/s] and the gravitational parameter `mu` [km^3/s^2], and the equations are:
+
+```
+rmag   = norm2(r)
+vmag   = norm2(v)
+rdotv  = dot(r, v)
+h      = cross(r, v)
+hmag   = norm2(h)
+energy = vmag^2/2 - mu/rmag
+a      = -mu/(2*energy)
+evec   = cross(v, h)/mu - r/rmag
+ecc    = norm2(evec)
+p      = hmag^2/mu
+inc    = acos(h[3]/hmag)
+nvec   = cross([0, 0, 1], h)
+nmag   = norm2(nvec)
+raan   = if(acos(nvec[1]/nmag), 2*pi - acos(nvec[1]/nmag), nvec[2] >= 0)
+argp   = if(acos(dot(nvec, evec)/(nmag*ecc)), 2*pi - acos(dot(nvec, evec)/(nmag*ecc)), evec[3] >= 0)
+nu     = if(acos(dot(evec, r)/(ecc*rmag)), 2*pi - acos(dot(evec, r)/(ecc*rmag)), rdotv >= 0)
+period = 2*pi*sqrt(a^3/mu)
+rp     = a*(1 - ecc)
+ra     = a*(1 + ecc)
+fpa    = atan2(rdotv/rmag, hmag/rmag)
+vcirc  = sqrt(mu/rmag)
+vesc   = sqrt(2)*vcirc
+```
+
+In the graph, the inputs are blue, the intermediate outputs are gray, and the final outputs, which no other expression uses, are green.
 
 ![Dependency graph of the orbital element equations](media/dependency_graph.svg)
 
