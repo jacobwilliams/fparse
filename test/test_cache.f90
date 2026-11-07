@@ -19,6 +19,7 @@
     public :: collect_cache
 
     integer :: ncalls = 0 !! number of calls to `counted`
+    integer :: ncalls_impure = 0 !! number of calls to `impure_counted`
 
     contains
 
@@ -28,6 +29,7 @@
         new_unittest("values", test_values_cached), &
         new_unittest("derivatives", test_derivatives_cached), &
         new_unittest("impure_functions", test_impure), &
+        new_unittest("impure_per_expression", test_impure_per_expression), &
         new_unittest("disabled", test_disabled), &
         new_unittest("exact_comparison", test_exact), &
         new_unittest("invalidation", test_invalidation), &
@@ -51,6 +53,15 @@
     ncalls = ncalls + 1
     res = 3.0_wp * args(1)%v
     end subroutine counted3
+
+    subroutine impure_counted(args, res, stat)
+    !! `impure_counted(x) = x`, counting the calls (it is added as impure)
+    type(fparse_value), dimension(:), intent(in) :: args
+    real(wp), dimension(:), allocatable, intent(out) :: res
+    integer, intent(inout) :: stat
+    ncalls_impure = ncalls_impure + 1
+    res = args(1)%v
+    end subroutine impure_counted
 
     subroutine setup(p, is_pure)
     !! `f = counted(x) + y`, `g = f * y`, with x = 1, y = 2
@@ -142,6 +153,56 @@
     call p%evaluate()
     call check(error, ncalls, n); if (allocated(error)) return
     end subroutine test_impure
+
+    subroutine test_impure_per_expression(error)
+    !! an impure function only prevents caching for the expressions that use it
+    !! (and the ones that depend on them)
+    type(error_type), allocatable, intent(out) :: error
+    type(fparser) :: p
+    real(wp) :: r
+    call p%add_function('counted', counted, is_pure=.true., nargs=1)
+    call p%add_function('impure', impure_counted, is_pure=.false., nargs=1)
+    call p%parse(['x', 'y'], str_list('a = counted(x)', &       ! pure
+                                      'b = impure(y)', &        ! impure
+                                      'c = counted(b)', &       ! depends on an impure one
+                                      'd = counted(a) + x'))    ! pure
+    call p%set_variables([1.0_wp, 2.0_wp])
+    ncalls = 0
+    ncalls_impure = 0
+    call p%evaluate()
+    call check(error, ncalls, 3); if (allocated(error)) return        ! a, c, d
+    call check(error, ncalls_impure, 1); if (allocated(error)) return  ! b
+    call p%evaluate() ! nothing changed: only b (impure) and c (depends on b)
+    call check(error, ncalls, 4); if (allocated(error)) return
+    call check(error, ncalls_impure, 2); if (allocated(error)) return
+    call p%get('d', r)
+    call check(error, r, 5.0_wp); if (allocated(error)) return
+    call p%get('c', r)
+    call check(error, r, 4.0_wp); if (allocated(error)) return
+    call p%set_variable('x', 3.0_wp) ! changes a and d (and b, c are recomputed anyway)
+    call p%evaluate()
+    call check(error, ncalls, 7); if (allocated(error)) return
+    call check(error, ncalls_impure, 3); if (allocated(error)) return
+    call p%get('d', r)
+    call check(error, r, 15.0_wp); if (allocated(error)) return
+    call p%set_variable('y', 5.0_wp) ! changes b and c only
+    call p%evaluate()
+    call check(error, ncalls, 8); if (allocated(error)) return
+    call check(error, ncalls_impure, 4); if (allocated(error)) return
+    call p%get('c', r)
+    call check(error, r, 10.0_wp); if (allocated(error)) return
+    ! with derivatives:
+    call p%evaluate(wrt=['x', 'y'])
+    ncalls = 0
+    ncalls_impure = 0
+    call p%evaluate(wrt=['x', 'y']) ! only b and c (with finite differences)
+    call check(error, ncalls_impure > 0, 'b should be recomputed'); if (allocated(error)) return
+    call check(error, ncalls > 0, 'c should be recomputed'); if (allocated(error)) return
+    call p%get_derivative('d', 'x', r)
+    call check(error, r, 5.0_wp, thr=1.0e-6_wp); if (allocated(error)) return ! d = 5x
+    call p%get_derivative('c', 'y', r)
+    call check(error, r, 2.0_wp, thr=1.0e-6_wp); if (allocated(error)) return
+    end subroutine test_impure_per_expression
 
     subroutine test_disabled(error)
     type(error_type), allocatable, intent(out) :: error

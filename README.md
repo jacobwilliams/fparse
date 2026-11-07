@@ -16,7 +16,7 @@ A Fortran function parser and evaluator for expressions involving multiple varia
 * **Conditionals:** `if(value_if_true, value_if_false, condition)`, where any nonzero condition counts as true. Conditionals can be nested and work element by element on vectors. With a scalar condition, only the selected branch is evaluated.
 * **User-defined functions** with any number of arguments, declared as pure or impure. You can supply a derivative routine for each one; if you don't, finite differences are used.
 * **Optional first derivatives** with respect to any of the input variables, using forward-mode automatic differentiation. Depending on the sizes involved, a derivative is a scalar, a vector or a matrix (Jacobian). Derivatives are computed only when you ask for them, so they don't slow down normal evaluation. Derivatives that the structure of the expressions shows are zero are skipped.
-* **Caching:** if the inputs and the requested derivatives haven't changed since the last evaluation, the previous results are returned without recomputing anything.
+* **Caching:** only the expressions whose inputs have changed since the last evaluation are recomputed. The others keep their previous results.
 * **Error checking.**
   * At parse time: syntax errors, undefined variables and functions, wrong argument counts, and invalid or duplicate names.
   * At runtime: division by zero, domain errors, size mismatches, out-of-bounds indexes, and unset variables.
@@ -105,17 +105,17 @@ call p%add_function('f', my_func, is_pure=.true., nargs=2, df=my_dfunc)  ! call 
 
 The optional derivative routine (interface `fparse_dfunc`) returns the Jacobian of the result with respect to `args(iarg)`. If you don't provide one, central finite differences are used. User functions take precedence over built-in functions with the same name.
 
-`is_pure` is required. Set it to `.true.` if the result depends only on the arguments, and `.false.` if the function uses saved state, random numbers, the time, or anything else that can change between calls. Results are never cached for expressions that use an impure function (see below).
+`is_pure` is required. Set it to `.true.` if the result depends only on the arguments, and `.false.` if the function uses saved state, random numbers, the time, or anything else that can change between calls. Expressions that use an impure function, and the ones that depend on them, are never cached (see below).
 
 #### Caching
 
-If nothing has changed since the last `evaluate`, the next call returns the previous results straight away. This is common in optimization, where the objective and its gradient are often requested again at the same point. Nothing has changed if all of these hold:
+`evaluate` only recomputes the expressions whose results may have changed since the last successful evaluation. This is common in optimization, where the objective and its gradient are often requested again at the same point, or where only some of the variables change. An expression keeps its cached result if all of these hold:
 
-* the previous evaluation succeeded;
-* every input has exactly the same value: the same size and the same elements, including the sign of zero (a NaN never matches);
+* no variable it references has changed. That includes inputs and the outputs of other expressions; values must be exactly the same, including the sign of zero, and a NaN never matches;
+* it doesn't call an impure user function;
 * the same derivatives are requested, meaning the same `wrt` list, or no derivatives both times. An `evaluate()` without `wrt` after an `evaluate(wrt=...)` at the same point reuses the values and discards the derivatives.
 
-Setting an input to the value it already has doesn't count as a change. The cache is cleared by `parse`, by `add_function`, and by changing the domain-checking, scalar-optimization or sparsity options. It isn't used at all if the expressions call an impure user function. To turn it off, use `p%set_caching(.false.)`.
+An expression that calls an impure function is recomputed on every `evaluate`, and so is any expression that depends on it. The rest are unaffected. Setting an input to the value it already has doesn't count as a change. The cache is cleared by `parse`, by `add_function`, and by changing the domain-checking, scalar-optimization or sparsity options. To turn it off, use `p%set_caching(.false.)`.
 
 ### Building and testing
 

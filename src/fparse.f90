@@ -114,8 +114,12 @@
         logical :: use_scalar_programs = .true. !! use the fast scalar evaluator when possible
         logical :: use_sparsity = .true. !! only compute the derivatives that can be nonzero
         logical :: use_cache = .true. !! reuse the last results if the inputs haven't changed
-        logical :: cache_ok = .true. !! false if the expressions use an impure user function
-                                     !! (so the results can't be cached)
+        logical, dimension(:), allocatable :: expr_pure !! if each expression only uses pure functions
+                                                        !! (so its result can be cached)
+        logical, dimension(:), allocatable :: expr_valid !! if the cached result of each expression is
+                                                         !! valid (for the inputs of the last evaluation)
+        logical, dimension(:), allocatable :: changed !! if each variable has changed since the last
+                                                      !! evaluation (inputs: set; outputs: recomputed)
         logical :: sparse_setup = .false. !! if the current derivative setup used sparsity
         type(deriv_layout), dimension(:), allocatable :: layout !! derivative columns of each variable
         type(expr_dsetup), dimension(:), allocatable :: dsetup !! derivative setup of each expression
@@ -247,7 +251,7 @@
     class(fparser), intent(inout) :: me
     logical, intent(in) :: check
 
-    if (me%check_domain .neqv. check) me%evaluated = .false.
+    if (me%check_domain .neqv. check) call invalidate_cache(me)
     me%check_domain = check
 
     end subroutine set_domain_checking
@@ -269,7 +273,7 @@
     class(fparser), intent(inout) :: me
     logical, intent(in) :: use
 
-    if (me%use_sparsity .neqv. use) me%evaluated = .false.
+    if (me%use_sparsity .neqv. use) call invalidate_cache(me)
     me%use_sparsity = use
 
     end subroutine set_sparsity
@@ -279,26 +283,29 @@
 !>
 !  Enable or disable caching (it is enabled by default).
 !
-!  When enabled, [[fparser:evaluate]] returns immediately, keeping the results
-!  of the previous evaluation, if:
+!  When enabled, [[fparser:evaluate]] only recomputes the expressions whose
+!  results may have changed since the previous (successful) evaluation. The
+!  cached result of an expression is kept if:
 !
-!  * the previous evaluation was successful,
-!  * none of the input variables have changed since then (the values must be exactly
-!    the same, including the sign of zero; a NaN never compares equal), and
+!  * none of the variables it references (inputs, or outputs of other expressions)
+!    have changed. Values must be exactly the same, including the sign of zero;
+!    a NaN never compares equal,
+!  * it doesn't use a user-defined function that was not added as pure
+!    (see [[fparser:add_function]]), and
 !  * the same derivatives are requested (the same `wrt` list, or no derivatives).
 !    If no derivatives are requested after an evaluation with derivatives, the
 !    values are reused and the derivatives are discarded.
 !
+!  An expression that uses an impure function is always recomputed, and so are
+!  the expressions that depend on it. The other expressions are not affected.
 !  Setting a variable to the value it already has does not count as a change.
-!  Caching is never used if the expressions use a user-defined function that
-!  was not added as pure (see [[fparser:add_function]]).
 
     subroutine set_caching(me, use)
 
     class(fparser), intent(inout) :: me
     logical, intent(in) :: use
 
-    if (me%use_cache .neqv. use) me%evaluated = .false.
+    if (me%use_cache .neqv. use) call invalidate_cache(me)
     me%use_cache = use
 
     end subroutine set_caching
@@ -316,7 +323,7 @@
     class(fparser), intent(inout) :: me
     logical, intent(in) :: use
 
-    if (me%use_scalar_programs .neqv. use) me%evaluated = .false.
+    if (me%use_scalar_programs .neqv. use) call invalidate_cache(me)
     me%use_scalar_programs = use
 
     end subroutine set_scalar_optimization
@@ -333,9 +340,9 @@
 !  the function is computed using central finite differences.
 !
 !  A function is pure if its result only depends on its arguments (for example,
-!  it doesn't use any saved state, random numbers, or the time). If the expressions
-!  use any function that is not pure, the results are never cached (see
-!  [[fparser:set_caching]]).
+!  it doesn't use any saved state, random numbers, or the time). The results of
+!  expressions that use a function that is not pure (and of the expressions that
+!  depend on them) are never cached (see [[fparser:set_caching]]).
 
     subroutine add_function(me, name, f, is_pure, nargs, df, status, errmsg)
 
@@ -371,8 +378,8 @@
         end do
         if (k > size(me%funcs)) me%funcs = [me%funcs, uf]
         ! a replaced function may be used by the parsed expressions:
-        me%evaluated = .false.
-        call update_cache_ok(me)
+        call invalidate_cache(me)
+        call update_purity(me)
     end if
 
     call finish(me, status, errmsg)
@@ -418,6 +425,9 @@
     if (allocated(me%expressions)) deallocate(me%expressions)
     if (allocated(me%trees)) deallocate(me%trees)
     if (allocated(me%progs)) deallocate(me%progs)
+    if (allocated(me%expr_pure)) deallocate(me%expr_pure)
+    if (allocated(me%expr_valid)) deallocate(me%expr_valid)
+    if (allocated(me%changed)) deallocate(me%changed)
     if (allocated(me%order)) deallocate(me%order)
     if (allocated(me%vals)) deallocate(me%vals)
     if (allocated(me%is_set)) deallocate(me%is_set)
@@ -512,7 +522,9 @@
         allocate(me%vals(nin + nout))
         allocate(me%is_set(nin), source=.false.)
         me%parsed = .true.
-        call update_cache_ok(me)
+        allocate(me%expr_valid(nout), source=.false.)
+        allocate(me%changed(nin + nout), source=.false.)
+        call update_purity(me)
 
     end block main
 
@@ -685,6 +697,7 @@
         end if
         me%vals(idx)%v = value
         me%is_set(idx) = .true.
+        me%changed(idx) = .true.
         me%evaluated = .false.
     end if
 
@@ -729,29 +742,44 @@
 
 !*****************************************************************************************
 !>
-!  Determine if the results can be cached (internal routine): not if any of the
-!  parsed expressions use a user-defined function that isn't pure.
+!  Determine which expressions can be cached (internal routine): an expression
+!  can't be cached if it uses a user-defined function that isn't pure.
 
-    subroutine update_cache_ok(me)
+    subroutine update_purity(me)
 
     class(fparser), intent(inout) :: me
 
     integer :: i, k
 
-    me%cache_ok = .true.
     if (.not. allocated(me%trees)) return
+    if (allocated(me%expr_pure)) deallocate(me%expr_pure)
+    allocate(me%expr_pure(size(me%trees)), source=.true.)
     do i = 1, size(me%trees)
         do k = 1, me%trees(i)%n_nodes
             if (me%trees(i)%nodes(k)%kind == node_user) then
                 if (.not. me%funcs(me%trees(i)%nodes(k)%op)%is_pure) then
-                    me%cache_ok = .false.
-                    return
+                    me%expr_pure(i) = .false.
+                    exit
                 end if
             end if
         end do
     end do
 
-    end subroutine update_cache_ok
+    end subroutine update_purity
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Invalidate all the cached results (internal routine).
+
+    subroutine invalidate_cache(me)
+
+    class(fparser), intent(inout) :: me
+
+    me%evaluated = .false.
+    if (allocated(me%expr_valid)) me%expr_valid = .false.
+
+    end subroutine invalidate_cache
 !*****************************************************************************************
 
 !*****************************************************************************************
@@ -874,6 +902,7 @@
                     end if
                     v%v(1) = values(i)
                     me%is_set(i) = .true.
+                    me%changed(i) = .true.
                     me%evaluated = .false.
                 end associate
             end do
@@ -906,19 +935,6 @@
     if (me%err%failed) call me%err%clear()
     nin = me%n_inputs
 
-    ! if nothing has changed since the last evaluation, use those results:
-    if (me%evaluated .and. me%use_cache .and. me%cache_ok) then
-        nwrt = 0
-        if (present(wrt)) nwrt = size(wrt)
-        if (nwrt == 0) then
-            if (me%nd > 0) call clear_derivatives() ! the values are still valid
-            call finish(me, status, errmsg)
-            return
-        else if (same_wrt()) then
-            call finish(me, status, errmsg)
-            return
-        end if
-    end if
     me%evaluated = .false.
 
     main: block
@@ -939,6 +955,8 @@
         if (present(wrt)) nwrt = size(wrt)
         if (nwrt > 0) then
             if (.not. same_wrt()) then
+                ! different derivatives requested: nothing can be reused
+                me%expr_valid = .false.
                 if (allocated(me%wrt_names)) deallocate(me%wrt_names)
                 me%nd = 0
                 me%wrt = [integer ::]
@@ -974,6 +992,11 @@
         ctx%check_domain = me%check_domain
         do k = 1, me%n_outputs
             i = me%order(k)
+            ! use the cached result if nothing it depends on has changed:
+            if (me%use_cache .and. me%expr_valid(i) .and. me%expr_pure(i)) then
+                if (.not. refs_changed(i)) cycle
+            end if
+            me%changed(nin + i) = .true.
             ! number of derivative columns for this expression:
             nde = 0
             if (me%nd > 0) nde = me%layout(nin + i)%nd
@@ -1030,8 +1053,13 @@
         if (ctx%err%failed) then
             call me%err%set('error evaluating expression '//int_to_str(i)//' "'//&
                             me%expressions(i)%str//'": '//ctx%err%message, ctx%err%pos)
+            me%expr_valid = .false.
             exit main
         end if
+
+        ! all the results are now valid for the current inputs:
+        me%expr_valid = .true.
+        me%changed = .false.
 
         me%evaluated = .true.
 
@@ -1040,6 +1068,17 @@
     call finish(me, status, errmsg)
 
     contains
+
+        logical function refs_changed(iexpr)
+        !! if any of the variables referenced by expression `iexpr` have changed
+        integer, intent(in) :: iexpr
+        integer :: j
+        refs_changed = .true.
+        do j = 1, size(me%trees(iexpr)%refs)
+            if (me%changed(me%trees(iexpr)%refs(j))) return
+        end do
+        refs_changed = .false.
+        end function refs_changed
 
         subroutine clear_derivatives()
         !! no derivatives: clear any from a previous evaluation
