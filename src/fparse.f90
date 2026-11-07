@@ -87,6 +87,9 @@
         integer, dimension(:), allocatable :: wrt_offset !! column offsets in the derivative matrices
         logical :: check_domain = .true. !! check for domain errors during evaluation
         logical :: use_scalar_programs = .true. !! use the fast scalar evaluator when possible
+        integer :: size_version = 0 !! incremented whenever the size of any value changes
+        integer, dimension(:), allocatable :: prog_version !! `size_version` when `prog_usable` was computed
+        logical, dimension(:), allocatable :: prog_usable !! if each scalar program can currently be used
         type(error_t) :: err !! error status
     contains
         private
@@ -177,7 +180,7 @@
 
     class(fparser), intent(inout) :: me
 
-    call me%err%clear()
+    if (me%err%failed) call me%err%clear()
 
     end subroutine clear_error
 !*****************************************************************************************
@@ -193,7 +196,7 @@
     character(len=:), allocatable, intent(out), optional :: errmsg
 
     if (present(status)) status = merge(1, 0, me%err%failed)
-    if (present(errmsg)) errmsg = me%error_message()
+    if (present(errmsg)) errmsg = error_message(me)
 
     end subroutine finish
 !*****************************************************************************************
@@ -255,7 +258,7 @@
     type(user_function) :: uf
     integer :: k
 
-    call me%err%clear()
+    if (me%err%failed) call me%err%clear()
     if (.not. allocated(me%funcs)) allocate(me%funcs(0))
 
     uf%name = to_lower(trim(adjustl(name)))
@@ -274,7 +277,7 @@
         if (k > size(me%funcs)) me%funcs = [me%funcs, uf]
     end if
 
-    call me%finish(status, errmsg)
+    call finish(me, status, errmsg)
 
     end subroutine add_function
 !*****************************************************************************************
@@ -309,7 +312,7 @@
     type(error_t) :: perr
 
     ! reset (keep the user functions and options)
-    call me%err%clear()
+    if (me%err%failed) call me%err%clear()
     me%parsed = .false.
     me%evaluated = .false.
     me%nd = 0
@@ -347,7 +350,7 @@
                 call me%err%set('invalid variable name "'//trim(variables(i))//'"')
                 exit main
             end if
-            if (me%find_variable(name, i-1) > 0) then
+            if (find_variable(me, name, i-1) > 0) then
                 call me%err%set('duplicate variable name "'//name//'"')
                 exit main
             end if
@@ -369,7 +372,7 @@
                     call me%err%set('invalid output name "'//name//'" for expression '//int_to_str(i))
                     exit main
                 end if
-                if (me%find_variable(name, nin + i - 1) > 0) then
+                if (find_variable(me, name, nin + i - 1) > 0) then
                     call me%err%set('duplicate name "'//name//'" for expression '//int_to_str(i))
                     exit main
                 end if
@@ -393,7 +396,7 @@
         end do
 
         ! determine the evaluation order:
-        call me%sort_expressions()
+        call sort_expressions(me)
         if (me%err%failed) exit main
 
         ! compile for fast scalar evaluation:
@@ -401,6 +404,9 @@
         do i = 1, nout
             call compile_scalar(me%trees(i), me%progs(i))
         end do
+        me%size_version = 0
+        me%prog_version = spread(-1, 1, nout)
+        me%prog_usable = spread(.false., 1, nout)
 
         allocate(me%vals(nin + nout))
         allocate(me%is_set(nin), source=.false.)
@@ -408,7 +414,7 @@
 
     end block main
 
-    call me%finish(status, errmsg)
+    call finish(me, status, errmsg)
 
     end subroutine parse
 !*****************************************************************************************
@@ -548,7 +554,7 @@
     class(fparser), intent(inout) :: me
     character(len=*), intent(in) :: name
 
-    idx = me%find_variable(to_lower(trim(adjustl(name))))
+    idx = find_variable(me, to_lower(trim(adjustl(name))))
     if (idx == 0) call me%err%set('unknown variable "'//trim(name)//'"')
 
     end function find_output
@@ -569,6 +575,11 @@
     else if (idx < 1 .or. idx > me%n_inputs) then
         call me%err%set('invalid input variable index '//int_to_str(idx))
     else
+        if (allocated(me%vals(idx)%v)) then
+            if (size(me%vals(idx)%v) /= size(value)) me%size_version = me%size_version + 1
+        else
+            me%size_version = me%size_version + 1
+        end if
         me%vals(idx)%v = value
         me%is_set(idx) = .true.
         me%evaluated = .false.
@@ -589,7 +600,7 @@
     integer, intent(out), optional :: status !! status code (0 if no errors)
     character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
 
-    call me%set_vector_by_name(name, [value], status, errmsg)
+    call set_vector_by_name(me, name, [value], status, errmsg)
 
     end subroutine set_scalar_by_name
 !*****************************************************************************************
@@ -608,18 +619,18 @@
 
     integer :: idx
 
-    call me%err%clear()
-    idx = me%find_variable(to_lower(trim(adjustl(name))), me%n_inputs)
+    if (me%err%failed) call me%err%clear()
+    idx = find_variable(me, to_lower(trim(adjustl(name))), me%n_inputs)
     if (idx == 0) then
-        if (me%find_variable(to_lower(trim(adjustl(name)))) > 0) then
+        if (find_variable(me, to_lower(trim(adjustl(name)))) > 0) then
             call me%err%set('"'//trim(name)//'" is an output and cannot be set')
         else
             call me%err%set('unknown input variable "'//trim(name)//'"')
         end if
     else
-        call me%set_value(idx, value)
+        call set_value(me, idx, value)
     end if
-    call me%finish(status, errmsg)
+    call finish(me, status, errmsg)
 
     end subroutine set_vector_by_name
 !*****************************************************************************************
@@ -636,7 +647,7 @@
     integer, intent(out), optional :: status !! status code (0 if no errors)
     character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
 
-    call me%set_vector_by_index(idx, [value], status, errmsg)
+    call set_vector_by_index(me, idx, [value], status, errmsg)
 
     end subroutine set_scalar_by_index
 !*****************************************************************************************
@@ -653,9 +664,9 @@
     integer, intent(out), optional :: status !! status code (0 if no errors)
     character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
 
-    call me%err%clear()
-    call me%set_value(idx, value)
-    call me%finish(status, errmsg)
+    if (me%err%failed) call me%err%clear()
+    call set_value(me, idx, value)
+    call finish(me, status, errmsg)
 
     end subroutine set_vector_by_index
 !*****************************************************************************************
@@ -674,17 +685,31 @@
 
     integer :: i
 
-    call me%err%clear()
+    if (me%err%failed) call me%err%clear()
     if (size(values) /= me%n_inputs) then
         call me%err%set('number of values ('//int_to_str(size(values))//&
                         ') does not match the number of variables ('//int_to_str(me%n_inputs)//')')
     else
-        do i = 1, me%n_inputs
-            call me%set_value(i, values(i:i))
-            if (me%err%failed) exit
-        end do
+        if (.not. me%parsed) then
+            call me%err%set('the expressions have not been parsed')
+        else
+            do i = 1, me%n_inputs
+                associate (v => me%vals(i))
+                    if (allocated(v%v)) then
+                        if (size(v%v) /= 1) deallocate(v%v)
+                    end if
+                    if (.not. allocated(v%v)) then
+                        allocate(v%v(1))
+                        me%size_version = me%size_version + 1
+                    end if
+                    v%v(1) = values(i)
+                end associate
+            end do
+            me%is_set = .true.
+            me%evaluated = .false.
+        end if
     end if
-    call me%finish(status, errmsg)
+    call finish(me, status, errmsg)
 
     end subroutine set_variables
 !*****************************************************************************************
@@ -708,7 +733,7 @@
     type(eval_ctx) :: ctx
     integer :: i, j, k, n, nin, idx, off, nwrt
 
-    call me%err%clear()
+    if (me%err%failed) call me%err%clear()
     me%evaluated = .false.
     nin = me%n_inputs
 
@@ -736,7 +761,7 @@
                 me%wrt_offset = [integer ::]
                 off = 0
                 do k = 1, nwrt
-                    idx = me%find_variable(to_lower(trim(adjustl(wrt(k)))), nin)
+                    idx = find_variable(me, to_lower(trim(adjustl(wrt(k)))), nin)
                     if (idx == 0) then
                         call me%err%set('cannot compute derivative with respect to "'//trim(wrt(k))//&
                                         '": not an input variable')
@@ -796,7 +821,10 @@
                     if (allocated(o%v)) then
                         if (size(o%v) /= 1) deallocate(o%v)
                     end if
-                    if (.not. allocated(o%v)) allocate(o%v(1))
+                    if (.not. allocated(o%v)) then
+                        allocate(o%v(1))
+                        me%size_version = me%size_version + 1
+                    end if
                     o%v(1) = prog%s(prog%root)
                     if (me%nd > 0) then
                         if (allocated(o%d)) then
@@ -810,6 +838,11 @@
                 call eval_tree(me%trees(i), me%vals, me%funcs, ctx)
                 if (ctx%err%failed) exit
                 associate (r => me%trees(i)%buf(me%trees(i)%root), o => me%vals(nin + i))
+                    if (allocated(o%v)) then
+                        if (size(o%v) /= size(r%v)) me%size_version = me%size_version + 1
+                    else
+                        me%size_version = me%size_version + 1
+                    end if
                     o%v = r%v
                     if (me%nd > 0) o%d = r%d
                 end associate
@@ -825,21 +858,29 @@
 
     end block main
 
-    call me%finish(status, errmsg)
+    call finish(me, status, errmsg)
 
     contains
 
         logical function use_scalar_program(iexpr)
         !! if the scalar program can be used for expression `iexpr`:
-        !! all the referenced variables must be scalars.
+        !! all the referenced variables must be scalars. The result is
+        !! cached until the size of any value changes.
         integer, intent(in) :: iexpr
         integer :: j
         use_scalar_program = .false.
         if (.not. me%use_scalar_programs .or. .not. me%progs(iexpr)%ok) return
-        do j = 1, size(me%trees(iexpr)%refs)
-            if (size(me%vals(me%trees(iexpr)%refs(j))%v) /= 1) return
-        end do
-        use_scalar_program = .true.
+        if (me%prog_version(iexpr) /= me%size_version) then
+            me%prog_version(iexpr) = me%size_version
+            me%prog_usable(iexpr) = .true.
+            do j = 1, size(me%trees(iexpr)%refs)
+                if (size(me%vals(me%trees(iexpr)%refs(j))%v) /= 1) then
+                    me%prog_usable(iexpr) = .false.
+                    exit
+                end if
+            end do
+        end if
+        use_scalar_program = me%prog_usable(iexpr)
         end function use_scalar_program
 
         logical function same_wrt()
@@ -877,12 +918,12 @@
 
     integer :: idx
 
-    call me%err%clear()
-    idx = me%find_output(name)
+    if (me%err%failed) call me%err%clear()
+    idx = find_output(me, name)
     if (.not. me%err%failed) then
         if (check_value(me, idx)) value = me%vals(idx)%v
     end if
-    call me%finish(status, errmsg)
+    call finish(me, status, errmsg)
 
     end subroutine get_vector_by_name
 !*****************************************************************************************
@@ -901,11 +942,11 @@
 
     integer :: idx
 
-    call me%err%clear()
+    if (me%err%failed) call me%err%clear()
     value = 0.0_wp
-    idx = me%find_output(name)
+    idx = find_output(me, name)
     if (.not. me%err%failed) call get_scalar(me, idx, value)
-    call me%finish(status, errmsg)
+    call finish(me, status, errmsg)
 
     end subroutine get_scalar_by_name
 !*****************************************************************************************
@@ -922,13 +963,13 @@
     integer, intent(out), optional :: status !! status code (0 if no errors)
     character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
 
-    call me%err%clear()
+    if (me%err%failed) call me%err%clear()
     if (iexpr < 1 .or. iexpr > me%n_outputs) then
         call me%err%set('invalid expression index '//int_to_str(iexpr))
     else
         if (check_value(me, me%n_inputs + iexpr)) value = me%vals(me%n_inputs + iexpr)%v
     end if
-    call me%finish(status, errmsg)
+    call finish(me, status, errmsg)
 
     end subroutine get_vector_by_index
 !*****************************************************************************************
@@ -945,14 +986,14 @@
     integer, intent(out), optional :: status !! status code (0 if no errors)
     character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
 
-    call me%err%clear()
+    if (me%err%failed) call me%err%clear()
     value = 0.0_wp
     if (iexpr < 1 .or. iexpr > me%n_outputs) then
         call me%err%set('invalid expression index '//int_to_str(iexpr))
     else
         call get_scalar(me, me%n_inputs + iexpr, value)
     end if
-    call me%finish(status, errmsg)
+    call finish(me, status, errmsg)
 
     end subroutine get_scalar_by_index
 !*****************************************************************************************
@@ -1025,7 +1066,7 @@
         call me%err%set('the expressions have not been evaluated')
         return
     end if
-    iwrt = me%find_variable(to_lower(trim(adjustl(wrt))), me%n_inputs)
+    iwrt = find_variable(me, to_lower(trim(adjustl(wrt))), me%n_inputs)
     k = 0
     if (iwrt > 0) k = findloc(me%wrt, iwrt, dim=1)
     if (k == 0) then
@@ -1100,10 +1141,10 @@
 
     integer :: idx
 
-    call me%err%clear()
-    idx = me%find_output(name)
+    if (me%err%failed) call me%err%clear()
+    idx = find_output(me, name)
     if (.not. me%err%failed) call get_deriv(me, idx, wrt, jac)
-    call me%finish(status, errmsg)
+    call finish(me, status, errmsg)
 
     end subroutine get_derivative_matrix_by_name
 !*****************************************************************************************
@@ -1124,11 +1165,11 @@
 
     integer :: idx
 
-    call me%err%clear()
+    if (me%err%failed) call me%err%clear()
     deriv = 0.0_wp
-    idx = me%find_output(name)
+    idx = find_output(me, name)
     if (.not. me%err%failed) call get_deriv_scalar(me, idx, wrt, deriv)
-    call me%finish(status, errmsg)
+    call finish(me, status, errmsg)
 
     end subroutine get_derivative_scalar_by_name
 !*****************************************************************************************
@@ -1148,13 +1189,13 @@
     integer, intent(out), optional :: status !! status code (0 if no errors)
     character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
 
-    call me%err%clear()
+    if (me%err%failed) call me%err%clear()
     if (iexpr < 1 .or. iexpr > me%n_outputs) then
         call me%err%set('invalid expression index '//int_to_str(iexpr))
     else
         call get_deriv(me, me%n_inputs + iexpr, wrt, jac)
     end if
-    call me%finish(status, errmsg)
+    call finish(me, status, errmsg)
 
     end subroutine get_derivative_matrix_by_index
 !*****************************************************************************************
@@ -1174,14 +1215,14 @@
     integer, intent(out), optional :: status !! status code (0 if no errors)
     character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
 
-    call me%err%clear()
+    if (me%err%failed) call me%err%clear()
     deriv = 0.0_wp
     if (iexpr < 1 .or. iexpr > me%n_outputs) then
         call me%err%set('invalid expression index '//int_to_str(iexpr))
     else
         call get_deriv_scalar(me, me%n_inputs + iexpr, wrt, deriv)
     end if
-    call me%finish(status, errmsg)
+    call finish(me, status, errmsg)
 
     end subroutine get_derivative_scalar_by_index
 !*****************************************************************************************

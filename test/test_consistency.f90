@@ -179,7 +179,31 @@
         return
     end if
     call p%get('d', r)
-    if (.not. close_to(r, 5.0_wp) .or. p%failed()) call test_failed(error, 'wrong value (vector 2)')
+    if (.not. close_to(r, 5.0_wp) .or. p%failed()) then
+        call test_failed(error, 'wrong value (vector 2)')
+        return
+    end if
+
+    ! an output whose size depends on a value (not on the input sizes):
+    call p%parse(['x'], str_list('c = if([1, 2], 3, x > 0)', 'd = c * 2'))
+    call p%set_variable('x', -1.0_wp)
+    call p%evaluate()
+    call p%get('d', v)
+    if (size(v) /= 1 .or. any(v /= [6.0_wp])) then
+        call test_failed(error, 'wrong value (scalar branch)')
+        return
+    end if
+    call p%set_variable('x', 1.0_wp)
+    call p%evaluate()
+    call p%get('d', v)
+    if (size(v) /= 2 .or. any(v /= [2.0_wp, 4.0_wp])) then
+        call test_failed(error, 'wrong value (vector branch)')
+        return
+    end if
+    call p%set_variable('x', -1.0_wp)
+    call p%evaluate()
+    call p%get('d', v)
+    if (size(v) /= 1 .or. any(v /= [6.0_wp])) call test_failed(error, 'wrong value (scalar branch 2)')
     end subroutine test_mixed_sizes
 
     end module test_consistency

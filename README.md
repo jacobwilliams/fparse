@@ -128,14 +128,14 @@ Time per evaluation (lower is better). In parentheses: time relative to native F
 
 | Case | Native Fortran | fparse | [fortran_function_parser][ffp] | [feq-parse][feq] | [M_calculator][mcalc] |
 |---|---:|---:|---:|---:|---:|
-| Simple expression | 0.6 ns | 26.8 ns (47x) | 12.8 ns (22x) ✅ | 141.1 ns (245x) | 58.86 µs (102173x) ❌ |
-| Trig expression | 4.3 ns | 37.4 ns (8.7x) | 26.4 ns (6.2x) ✅ | 173.8 ns (40x) | 113.18 µs (26352x) ❌ |
-| Polynomial | 0.7 ns | 36.2 ns (55x) ✅ | 38.4 ns (59x) | 1.06 µs (1627x) | 152.78 µs (233998x) ❌ |
-| Complex expression | 9.8 ns | 91.4 ns (9.3x) ✅ | 163.5 ns (17x) | 2.13 µs (218x) | 413.02 µs (42110x) ❌ |
-| 100 equations (time per set) | 225.4 ns | 3.21 µs (14x) ✅ | 4.76 µs (21x) | 87.28 µs (387x) | 10.33 ms (45817x) ❌ |
-| Vector, 1000 points (time per set) | 4.20 µs | 7.68 µs (1.8x) ✅ | 26.67 µs (6.4x) | 13.67 µs (3.3x) | 108.44 ms (25827x) ❌ |
-| Parse complex expression | — | 10.15 µs | 105.76 µs (10x) ❌ | 7.70 µs (0.8x) ✅ | — |
-| Trig expression + gradient | 12.6 ns | 226.6 ns (18x) ✅ | — | — | — |
+| Simple expression | 0.6 ns | 19.1 ns (33x) | 12.4 ns (21x) ✅ | 139.0 ns (239x) | 54.74 µs (94014x) ❌ |
+| Trig expression | 4.3 ns | 25.1 ns (5.8x) ✅ | 25.5 ns (5.9x) | 172.9 ns (40x) | 102.45 µs (23781x) ❌ |
+| Polynomial | 0.6 ns | 27.2 ns (43x) ✅ | 36.3 ns (57x) | 1.07 µs (1675x) | 149.28 µs (234755x) ❌ |
+| Complex expression | 9.7 ns | 87.3 ns (9.0x) ✅ | 160.5 ns (16x) | 2.08 µs (214x) | 404.92 µs (41577x) ❌ |
+| 100 equations (time per set) | 205.5 ns | 2.41 µs (12x) ✅ | 4.62 µs (23x) | 86.24 µs (420x) | 9.79 ms (47646x) ❌ |
+| Vector, 1000 points (time per set) | 4.18 µs | 7.54 µs (1.8x) ✅ | 27.01 µs (6.5x) | 13.91 µs (3.3x) | 107.81 ms (25771x) ❌ |
+| Parse complex expression | — | 11.10 µs | 105.49 µs (9.5x) ❌ | 7.33 µs (0.7x) ✅ | — |
+| Trig expression + gradient | 12.5 ns | 198.3 ns (16x) ✅ | — | — | — |
 
 Expressions (variables `x`, `y`, `z`):
 
@@ -162,6 +162,7 @@ Notes:
 * Some parsers from the list are left out:
   * [ffp](https://github.com/jacobwilliams/ffp) has an `fpm.toml` but doesn't compile under fpm, because it relies on implicit typing.
   * The others ([fortran_parser](https://github.com/sdm900/fortran_parser), [FortranParser](https://github.com/jacopo-chevallard/FortranParser), [Fortran-Expression-Evaluator](https://github.com/ivomarsoares-personal/Fortran-Expression-Evaluator), [calmat](https://github.com/hassaniriad/calmat)) aren't fpm packages.
+
 
 
 

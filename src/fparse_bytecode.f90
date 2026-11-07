@@ -28,23 +28,32 @@
     ! the two-argument functions use `fn_offset + fn_*`, and the
     ! one-argument functions use `unary_offset + fn_*`.
     integer, parameter :: unary_offset = 300
-    integer, parameter :: ins_var  = 401 !! `s(o) = vars(a)%v(1)`
     integer, parameter :: ins_neg  = 402 !! `s(o) = -s(a)`
     integer, parameter :: ins_not  = 403 !! `s(o) = .not. s(a)`
     integer, parameter :: ins_move = 404 !! `s(o) = s(a)`
     integer, parameter :: ins_jz   = 405 !! if `s(a) == 0`, jump to instruction `o`
     integer, parameter :: ins_jmp  = 406 !! jump to instruction `o`
 
+    ! dense instruction codes used for dispatch in [[exec_scalar]]
+    ! (so the `select case` compiles to a compact jump table):
+    integer, parameter :: d_add = 1, d_sub = 2, d_mul = 3, d_div = 4, d_pow = 5, &
+                          d_neg = 6, d_not = 7, d_move = 8, d_jz = 9, d_jmp = 10, &
+                          d_max = 11, d_min = 12, d_sin = 13, d_cos = 14, d_exp = 15, &
+                          d_abs = 16, d_sqrt = 17, d_unary = 18, d_binary = 19
+
     type, public :: scalar_program
         !! A compiled scalar expression.
         logical :: ok = .false. !! true if the expression could be compiled
         integer :: n = 0 !! number of instructions
         integer :: root = 0 !! slot containing the result
-        integer, dimension(:), allocatable :: op !! instruction codes
-        integer, dimension(:), allocatable :: a !! first operand slot (or variable index)
-        integer, dimension(:), allocatable :: b !! second operand slot
-        integer, dimension(:), allocatable :: o !! output slot (or jump target)
+        integer, dimension(:,:), allocatable :: ins !! the instructions `[5, n]`. For each one:
+                                                   !! the dense code (`d_*`), first operand slot,
+                                                   !! second operand slot, output slot (or jump
+                                                   !! target), and the full operation code
         integer, dimension(:), allocatable :: pos !! position in the expression (for error messages)
+        integer :: nvar = 0 !! number of variable loads
+        integer, dimension(:), allocatable :: var_slot !! slots to load the variables into
+        integer, dimension(:), allocatable :: var_index !! the variables to load
         real(wp), dimension(:), allocatable :: s !! the slots
         real(wp), dimension(:,:), allocatable :: sd !! the derivatives of the slots `[nd, n_slots]`
                                                     !! (only used by [[exec_scalar_d]])
@@ -68,17 +77,17 @@
     integer :: nmax
 
     nmax = 2 * tree%n_nodes + 1 ! upper bound on the number of instructions
-    allocate(prog%op(nmax), prog%a(nmax), prog%b(nmax), prog%o(nmax), prog%pos(nmax))
+    allocate(prog%ins(5, nmax), prog%pos(nmax))
+    allocate(prog%var_slot(tree%n_nodes), prog%var_index(tree%n_nodes))
     allocate(prog%s(tree%n_nodes), source=0.0_wp)
     prog%ok = .true.
     call emit(tree%root)
     prog%root = tree%root
     if (prog%ok) then
-        prog%op = prog%op(1:prog%n)
-        prog%a = prog%a(1:prog%n)
-        prog%b = prog%b(1:prog%n)
-        prog%o = prog%o(1:prog%n)
+        prog%ins = prog%ins(:, 1:prog%n)
         prog%pos = prog%pos(1:prog%n)
+        prog%var_slot = prog%var_slot(1:prog%nvar)
+        prog%var_index = prog%var_index(1:prog%nvar)
     end if
 
     contains
@@ -101,7 +110,10 @@
             prog%s(inode) = node%value
 
         case (node_var)
-            call add(ins_var, node%op, 0, inode, node%pos)
+            ! variables are loaded before the instructions are executed
+            prog%nvar = prog%nvar + 1
+            prog%var_slot(prog%nvar) = inode
+            prog%var_index(prog%nvar) = node%op
 
         case (node_unary)
             call emit(c1)
@@ -127,10 +139,10 @@
                 call add(ins_move, c1, 0, inode, node%pos)
                 call add(ins_jmp, 0, 0, 0, node%pos)
                 j2 = prog%n
-                prog%o(j1) = prog%n + 1
+                prog%ins(4, j1) = prog%n + 1
                 call emit(c2)
                 call add(ins_move, c2, 0, inode, node%pos)
-                prog%o(j2) = prog%n + 1
+                prog%ins(4, j2) = prog%n + 1
             case (fn_max, fn_min)
                 do k = 1, nargs
                     call emit(node%args(k))
@@ -183,12 +195,39 @@
         !! add an instruction
         integer, intent(in) :: op, a, b, o, pos
         prog%n = prog%n + 1
-        prog%op(prog%n) = op
-        prog%a(prog%n) = a
-        prog%b(prog%n) = b
-        prog%o(prog%n) = o
+        prog%ins(:, prog%n) = [dense_code(op), a, b, o, op]
         prog%pos(prog%n) = pos
         end subroutine add
+
+        pure integer function dense_code(op)
+        !! the dense instruction code for an operation code
+        integer, intent(in) :: op
+        select case (op)
+        case (op_add);                 dense_code = d_add
+        case (op_sub);                 dense_code = d_sub
+        case (op_mul);                 dense_code = d_mul
+        case (op_div);                 dense_code = d_div
+        case (op_pow);                 dense_code = d_pow
+        case (ins_neg);                dense_code = d_neg
+        case (ins_not);                dense_code = d_not
+        case (ins_move);               dense_code = d_move
+        case (ins_jz);                 dense_code = d_jz
+        case (ins_jmp);                dense_code = d_jmp
+        case (fn_offset + fn_max);     dense_code = d_max
+        case (fn_offset + fn_min);     dense_code = d_min
+        case (unary_offset + fn_sin);  dense_code = d_sin
+        case (unary_offset + fn_cos);  dense_code = d_cos
+        case (unary_offset + fn_exp);  dense_code = d_exp
+        case (unary_offset + fn_abs);  dense_code = d_abs
+        case (unary_offset + fn_sqrt); dense_code = d_sqrt
+        case default
+            if (op > unary_offset) then
+                dense_code = d_unary
+            else
+                dense_code = d_binary
+            end if
+        end select
+        end function dense_code
 
     end subroutine compile_scalar
 !*****************************************************************************************
@@ -209,73 +248,85 @@
 
     check = ctx%check_domain
 
-    associate (s => prog%s)
+    associate (s => prog%s, ins => prog%ins)
+
+    do k = 1, prog%nvar
+        s(prog%var_slot(k)) = vars(prog%var_index(k))%v(1)
+    end do
 
     k = 1
     do while (k <= prog%n)
 
-        op = prog%op(k)
-        a = prog%a(k)
-        b = prog%b(k)
-        o = prog%o(k)
+        a = ins(2, k)
+        b = ins(3, k)
+        o = ins(4, k)
 
-        select case (op)
-        case (ins_var);  s(o) = vars(a)%v(1)
-        case (ins_neg);  s(o) = -s(a)
-        case (ins_not);  s(o) = merge(1.0_wp, 0.0_wp, s(a) == 0.0_wp)
-        case (ins_move); s(o) = s(a)
-        case (ins_jz)
-            if (s(a) == 0.0_wp) then
-                k = o
-                cycle
-            end if
-        case (ins_jmp)
-            k = o
-            cycle
-        case (op_add); s(o) = s(a) + s(b)
-        case (op_sub); s(o) = s(a) - s(b)
-        case (op_mul); s(o) = s(a) * s(b)
-        case (op_div)
-            if (check .and. s(b) == 0.0_wp) then
-                call ctx%err%set(domain_message(binary_check(op, s(a), s(b))), prog%pos(k))
-                return
+        select case (ins(1, k))
+        case (d_add);  s(o) = s(a) + s(b)
+        case (d_sub);  s(o) = s(a) - s(b)
+        case (d_mul);  s(o) = s(a) * s(b)
+        case (d_div)
+            if (check) then
+                if (s(b) == 0.0_wp) then
+                    call ctx%err%set(domain_message(binary_check(op_div, s(a), s(b))), prog%pos(k))
+                    return
+                end if
             end if
             s(o) = s(a) / s(b)
-        case (op_pow)
+        case (d_pow)
             if (check) then
-                ierr = binary_check(op, s(a), s(b))
+                ierr = binary_check(op_pow, s(a), s(b))
                 if (ierr /= 0) then
                     call ctx%err%set(domain_message(ierr), prog%pos(k))
                     return
                 end if
             end if
             s(o) = pow(s(a), s(b))
-        case (fn_offset + fn_max); s(o) = max(s(a), s(b))
-        case (fn_offset + fn_min); s(o) = min(s(a), s(b))
-        case (unary_offset + fn_sin); s(o) = sin(s(a))
-        case (unary_offset + fn_cos); s(o) = cos(s(a))
-        case (unary_offset + fn_exp); s(o) = exp(s(a))
-        case (unary_offset + fn_abs); s(o) = abs(s(a))
-        case default
-            if (op > unary_offset) then ! other one-argument functions
-                if (check) then
-                    ierr = unary_check(op - unary_offset, s(a))
-                    if (ierr /= 0) then
-                        call ctx%err%set(domain_message(ierr), prog%pos(k))
-                        return
-                    end if
-                end if
-                s(o) = unary_value(op - unary_offset, s(a))
-            else ! other binary operators and two-argument functions
-                if (check .and. has_domain_check(op)) then
-                    ierr = binary_check(op, s(a), s(b))
-                    if (ierr /= 0) then
-                        call ctx%err%set(domain_message(ierr), prog%pos(k))
-                        return
-                    end if
-                end if
-                s(o) = binary_value(op, s(a), s(b))
+        case (d_neg);  s(o) = -s(a)
+        case (d_not);  s(o) = merge(1.0_wp, 0.0_wp, s(a) == 0.0_wp)
+        case (d_move); s(o) = s(a)
+        case (d_jz)
+            if (s(a) == 0.0_wp) then
+                k = o
+                cycle
             end if
+        case (d_jmp)
+            k = o
+            cycle
+        case (d_max);  s(o) = max(s(a), s(b))
+        case (d_min);  s(o) = min(s(a), s(b))
+        case (d_sin);  s(o) = sin(s(a))
+        case (d_cos);  s(o) = cos(s(a))
+        case (d_exp);  s(o) = exp(s(a))
+        case (d_abs);  s(o) = abs(s(a))
+        case (d_sqrt)
+            if (check) then
+                if (s(a) < 0.0_wp) then
+                    call ctx%err%set(domain_message(unary_check(fn_sqrt, s(a))), prog%pos(k))
+                    return
+                end if
+            end if
+            s(o) = sqrt(s(a))
+        case (d_unary) ! other one-argument functions
+            op = ins(5, k) - unary_offset
+            if (check) then
+                ierr = unary_check(op, s(a))
+                if (ierr /= 0) then
+                    call ctx%err%set(domain_message(ierr), prog%pos(k))
+                    return
+                end if
+            end if
+            s(o) = unary_value(op, s(a))
+        case default ! other binary operators and two-argument functions
+            op = ins(5, k)
+            if (check .and. has_domain_check(op)) then
+                ierr = binary_check(op, s(a), s(b))
+                if (ierr /= 0) then
+                    call ctx%err%set(domain_message(ierr), prog%pos(k))
+                    return
+                end if
+            end if
+            s(o) = binary_value(op, s(a), s(b))
         end select
 
         k = k + 1
@@ -312,18 +363,20 @@
 
     associate (s => prog%s, sd => prog%sd)
 
+    do k = 1, prog%nvar
+        s(prog%var_slot(k)) = vars(prog%var_index(k))%v(1)
+        sd(:, prog%var_slot(k)) = vars(prog%var_index(k))%d(1, :)
+    end do
+
     k = 1
     do while (k <= prog%n)
 
-        op = prog%op(k)
-        a = prog%a(k)
-        b = prog%b(k)
-        o = prog%o(k)
+        op = prog%ins(5, k)
+        a = prog%ins(2, k)
+        b = prog%ins(3, k)
+        o = prog%ins(4, k)
 
         select case (op)
-        case (ins_var)
-            s(o) = vars(a)%v(1)
-            sd(:, o) = vars(a)%d(1, :)
         case (ins_neg)
             s(o) = -s(a)
             sd(:, o) = -sd(:, a)
