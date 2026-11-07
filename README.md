@@ -25,7 +25,7 @@ A Fortran function parser and evaluator for expressions involving multiple varia
 
 ### Usage
 
-```fortran
+```fortran-free-form
 use fparse
 
 type(fparser) :: p
@@ -89,7 +89,7 @@ Evaluation checks for division by zero, domain errors (`sqrt`/`log` of negative 
 
 #### User-defined functions
 
-```fortran
+```fortran-free-form
 subroutine my_func(args, res, stat)   ! interface: fparse_func
     type(fparse_value), intent(in) :: args(:)       ! args(i)%v is the i-th argument (scalar = size 1)
     real(wp), allocatable, intent(out) :: res(:)
