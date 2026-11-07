@@ -133,6 +133,9 @@
     call g%layout(status)
     if (status /= 0) error stop 'graph layout failed'
     call g%write_svg(svg)
+    ! the text inherits the stroke of the edges from the enclosing group, which
+    ! draws a grey outline around the white letters, so remove it:
+    svg = replace_all(svg, '<text ', '<text stroke="none" ')
     call write_file(dir//'/dependencies.svg', svg)
 
     ! export in the other formats:
@@ -167,6 +170,24 @@
             s = s//p%output_name(idx(j))
         end do
     end function output_list
+
+    function replace_all(s, old, new) result(r)
+        !! replace all the occurrences of a substring
+        character(len=*), intent(in) :: s !! the string
+        character(len=*), intent(in) :: old !! the substring to replace
+        character(len=*), intent(in) :: new !! the replacement
+        character(len=:), allocatable :: r !! the string with the replacements
+        integer :: i, j
+        r = ''
+        i = 1
+        do
+            j = index(s(i:), old)
+            if (j == 0) exit
+            r = r//s(i:i+j-2)//new
+            i = i + j - 1 + len(old)
+        end do
+        r = r//s(i:)
+    end function replace_all
 
     subroutine write_file(filename, text)
         !! write a string to a file
