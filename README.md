@@ -4,7 +4,7 @@ A Fortran function parser and evaluator for expressions involving multiple varia
 ### Features
 
 * **Standard modern Fortran.** Object-oriented, with no compiler extensions. Documented with FORD-compatible doc comments. MIT licensed.
-* **Expressions of any number of variables**, such as `sin(x) + 2.0*y`. Each expression is parsed once into an internal tree, and you can then evaluate it as many times as you like with new variable values.
+* **Expressions of any number of variables**, such as `sin(x) + 2.0*y`. Each expression is parsed once into an internal tree, and you can then evaluate it as many times as you like with new variable values. When all the variables are scalars, a compiled scalar instruction list is used instead, which is several times faster.
 * **Systems of named expressions.** You pass a list of expressions such as `['z = sin(x) + 2.0*y', 'w = z + x']`. An output can be used in other expressions, and the evaluation order is worked out from the dependencies automatically. Circular dependencies are reported as errors.
 * **Scalars and vectors.** A variable can be a scalar or a vector, and operations and functions work element by element as in Fortran (`sin(x)` is a vector if `x` is a vector). Scalars are broadcast. You can build vectors with `[a, b, c]` and index them with `v[i]`.
 * **Operators:** arithmetic (`+ - * / ^ **`), relational (`== /= < <= > >=`, plus the Fortran `.eq.`-style forms) and logical (`&& || !`, plus `.and. .or. .not.`).
@@ -128,14 +128,14 @@ Time per evaluation (lower is better). In parentheses: time relative to native F
 
 | Case | Native Fortran | fparse | [fortran_function_parser][ffp] | [feq-parse][feq] | [M_calculator][mcalc] |
 |---|---:|---:|---:|---:|---:|
-| Simple expression | 0.5 ns | 123.6 ns (228x) | 12.3 ns (23x) | 136.4 ns (252x) | 57.96 µs (107147x) |
-| Trig expression | 4.3 ns | 203.1 ns (47x) | 25.2 ns (5.9x) | 168.6 ns (39x) | 106.62 µs (24892x) |
-| Polynomial | 0.6 ns | 367.6 ns (578x) | 35.8 ns (56x) | 1.05 µs (1646x) | 146.05 µs (229681x) |
-| Complex expression | 9.7 ns | 856.4 ns (88x) | 158.0 ns (16x) | 2.08 µs (214x) **wrong result** | 378.72 µs (39125x) |
-| 100 equations (time per set) | 204.2 ns | 26.36 µs (129x) | 4.63 µs (23x) | 85.31 µs (418x) | 10.24 ms (50177x) |
-| Vector, 1000 points (time per set) | 4.13 µs | 6.81 µs (1.6x) | 26.96 µs (6.5x) | 11.39 µs (2.8x) | 106.37 ms (25738x) |
-| Parse complex expression | — | 8.14 µs | 102.87 µs (13x) | 6.38 µs (0.8x) | — |
-| Trig expression + gradient | 12.4 ns | 986.3 ns (79x) | — | — | — |
+| Simple expression | 0.6 ns | 27.4 ns (49x) | 12.3 ns (22x) | 138.9 ns (250x) | 56.99 µs (102536x) |
+| Trig expression | 4.3 ns | 35.4 ns (8.2x) | 25.3 ns (5.9x) | 172.8 ns (40x) | 106.54 µs (24752x) |
+| Polynomial | 0.6 ns | 35.7 ns (57x) | 36.0 ns (57x) | 1.06 µs (1687x) | 144.64 µs (230421x) |
+| Complex expression | 9.7 ns | 94.9 ns (9.8x) | 158.6 ns (16x) | 2.11 µs (217x) **wrong result** | 394.02 µs (40570x) |
+| 100 equations (time per set) | 207.3 ns | 3.20 µs (15x) | 4.64 µs (22x) | 85.67 µs (413x) | 10.29 ms (49634x) |
+| Vector, 1000 points (time per set) | 4.29 µs | 7.57 µs (1.8x) | 26.94 µs (6.3x) | 10.78 µs (2.5x) | 113.17 ms (26363x) |
+| Parse complex expression | — | 8.96 µs | 105.56 µs (12x) | 5.80 µs (0.6x) | — |
+| Trig expression + gradient | 12.5 ns | 216.4 ns (17x) | — | — | — |
 
 Expressions (variables `x`, `y`, `z`):
 
@@ -156,11 +156,12 @@ Generated on 2026-11-07 by `pixi run benchmark` ([test/benchmark.f90](test/bench
 
 Notes:
 
-* fparse evaluates an expression tree and handles vectors and derivatives. fortran_function_parser compiles each expression to scalar bytecode, so it's faster on scalar expressions but only supports scalars.
+* fparse compiles each expression to a scalar instruction list, which it uses whenever all the variables are scalars, including when gradients are requested. Otherwise it uses a tree evaluator that handles vectors and Jacobians, and whose buffers are reused between evaluations. For very short expressions, its fixed cost per call (setting variables, evaluating and getting results, with error checking) is the main cost.
 * feq-parse (v2.2.2) gets a wrong result for the complex expression because it evaluates `a - b + c` as `a - (b + c)` (for example, `1 - 2 + 3` gives `-4`).
 * M_calculator is an interpreter: it processes the expression string on every evaluation, and it has no separate parse step. Variables are passed through its `x(:)` array.
 * Some parsers from the list are left out:
   * [ffp](https://github.com/jacobwilliams/ffp) has an `fpm.toml` but doesn't compile under fpm, because it relies on implicit typing.
   * The others ([fortran_parser](https://github.com/sdm900/fortran_parser), [FortranParser](https://github.com/jacopo-chevallard/FortranParser), [Fortran-Expression-Evaluator](https://github.com/ivomarsoares-personal/Fortran-Expression-Evaluator), [calmat](https://github.com/hassaniriad/calmat)) aren't fpm packages.
+
 
 

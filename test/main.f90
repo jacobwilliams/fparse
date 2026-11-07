@@ -14,6 +14,7 @@
     use test_derivatives, only: collect_derivatives
     use test_user_functions, only: collect_user_functions
     use test_errors, only: collect_errors
+    use test_consistency, only: collect_consistency
 
     implicit none
 
@@ -31,7 +32,8 @@
         new_testsuite("multi", collect_multi), &
         new_testsuite("derivatives", collect_derivatives), &
         new_testsuite("user_functions", collect_user_functions), &
-        new_testsuite("errors", collect_errors) ]
+        new_testsuite("errors", collect_errors), &
+        new_testsuite("consistency", collect_consistency) ]
 
     do is = 1, size(testsuites)
         write(error_unit, fmt) "Testing:", testsuites(is)%name

@@ -14,6 +14,10 @@
 !  of the value with respect to the `nd` (concatenated) elements of
 !  the variables being differentiated with respect to. When `nd=0`,
 !  no derivative computations are performed.
+!
+!  Each node of the tree stores its result in its own buffer (`tree%buf`),
+!  which is reused between evaluations, so that no memory allocation is
+!  needed once the sizes of the values are known.
 
     module fparse_eval
 
@@ -27,12 +31,22 @@
 
     real(wp), parameter :: pi = acos(-1.0_wp)
 
-    type, public :: val_t
-        !! A value (and optionally its derivative).
-        real(wp), dimension(:), allocatable :: v !! the value
-        real(wp), dimension(:,:), allocatable :: d !! the derivative `[size(v), nd]`
-                                                    !! (only allocated if `nd>0`)
-    end type val_t
+    integer, parameter, public :: fn_offset = 100 !! binary operation codes for the two-argument
+                                                  !! functions are `fn_offset + fn_*`.
+
+    ! domain error codes:
+    integer, parameter :: err_div_zero   = 1
+    integer, parameter :: err_pow_zero   = 2
+    integer, parameter :: err_pow_neg    = 3
+    integer, parameter :: err_atan2      = 4
+    integer, parameter :: err_mod_zero   = 5
+    integer, parameter :: err_sqrt       = 6
+    integer, parameter :: err_log        = 7
+    integer, parameter :: err_log10      = 8
+    integer, parameter :: err_asin       = 9
+    integer, parameter :: err_acos       = 10
+    integer, parameter :: err_acosh      = 11
+    integer, parameter :: err_atanh      = 12
 
     type, public :: eval_ctx
         !! Evaluation context.
@@ -43,23 +57,27 @@
     end type eval_ctx
 
     public :: eval_tree
+    ! scalar helper functions (also used by the bytecode evaluator):
+    public :: binary_value, binary_check, has_domain_check
+    public :: unary_value, unary_check, domain_message
+    public :: pow, is_integer
+    public :: binary_partials, unary_derivative
 
     contains
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
-!  Evaluate an expression tree.
+!  Evaluate an expression tree. The result is in `tree%buf(tree%root)`.
 
-    subroutine eval_tree(tree, vars, funcs, ctx, res)
+    subroutine eval_tree(tree, vars, funcs, ctx)
 
-    type(expr_tree), intent(in) :: tree !! the expression tree
+    type(expr_tree), intent(inout) :: tree !! the expression tree
     type(val_t), dimension(:), intent(in) :: vars !! variable values (and derivatives if `nd>0`)
     type(user_function), dimension(:), intent(in) :: funcs !! user-defined functions
     type(eval_ctx), intent(inout) :: ctx !! evaluation context
-    type(val_t), intent(out) :: res !! the result
 
-    call eval_node(tree, tree%root, vars, funcs, ctx, res)
+    call eval_node(tree, tree%root, vars, funcs, ctx)
 
     end subroutine eval_tree
 !*****************************************************************************************
@@ -67,357 +85,251 @@
 !*****************************************************************************************
 !>
 !  Evaluate a node of an expression tree (recursively).
+!  The result is stored in `tree%buf(inode)`.
 
-    recursive subroutine eval_node(tree, inode, vars, funcs, ctx, res)
+    recursive subroutine eval_node(tree, inode, vars, funcs, ctx)
 
-    type(expr_tree), intent(in) :: tree !! the expression tree
+    type(expr_tree), intent(inout) :: tree !! the expression tree
     integer, intent(in) :: inode !! the node to evaluate
     type(val_t), dimension(:), intent(in) :: vars !! variable values
     type(user_function), dimension(:), intent(in) :: funcs !! user-defined functions
     type(eval_ctx), intent(inout) :: ctx !! evaluation context
-    type(val_t), intent(out) :: res !! the result
 
-    type(val_t) :: a, b
-    type(val_t), dimension(:), allocatable :: items
-    integer :: nd, k, i, m, n
+    integer :: nd, kind, op, pos, k, c1, c2, i, m, n, nargs
 
     nd = ctx%nd
+    kind = tree%nodes(inode)%kind
+    op = tree%nodes(inode)%op
+    pos = tree%nodes(inode)%pos
 
-    associate (node => tree%nodes(inode))
-
-    select case (node%kind)
+    select case (kind)
 
     case (node_const)
-        call make_const(res, [node%value], nd)
+        call ensure(tree%buf(inode), 1, nd)
+        tree%buf(inode)%v(1) = tree%nodes(inode)%value
+        if (nd > 0) tree%buf(inode)%d = 0.0_wp
 
     case (node_var)
-        res = vars(node%op)
+        call copy_val(vars(op), tree%buf(inode), nd)
 
     case (node_unary)
-        call eval_node(tree, node%args(1), vars, funcs, ctx, a)
+        c1 = tree%nodes(inode)%args(1)
+        call eval_node(tree, c1, vars, funcs, ctx)
         if (ctx%err%failed) return
-        select case (node%op)
-        case (op_neg)
-            res%v = -a%v
-            if (nd > 0) res%d = -a%d
-        case (op_not)
-            call make_const(res, merge(1.0_wp, 0.0_wp, a%v == 0.0_wp), nd)
-        end select
+        associate (a => tree%buf(c1), r => tree%buf(inode))
+            call ensure(r, size(a%v), nd)
+            if (op == op_neg) then
+                r%v = -a%v
+                if (nd > 0) r%d = -a%d
+            else ! op_not
+                r%v = merge(1.0_wp, 0.0_wp, a%v == 0.0_wp)
+                if (nd > 0) r%d = 0.0_wp
+            end if
+        end associate
 
     case (node_binary)
-        call eval_node(tree, node%args(1), vars, funcs, ctx, a)
+        c1 = tree%nodes(inode)%args(1)
+        c2 = tree%nodes(inode)%args(2)
+        call eval_node(tree, c1, vars, funcs, ctx)
         if (ctx%err%failed) return
-        call eval_node(tree, node%args(2), vars, funcs, ctx, b)
+        call eval_node(tree, c2, vars, funcs, ctx)
         if (ctx%err%failed) return
-        call conform(a, b, ctx, node%pos)
-        if (ctx%err%failed) return
-        call binary_op(node%op, a, b, ctx, node%pos, res)
+        call binary_op(op, tree%buf(c1), tree%buf(c2), ctx, pos, tree%buf(inode))
 
     case (node_builtin)
-        call eval_builtin(tree, inode, vars, funcs, ctx, res)
+        call eval_builtin(tree, inode, vars, funcs, ctx)
 
     case (node_user)
-        call eval_user(tree, inode, vars, funcs, ctx, res)
+        call eval_user(tree, inode, vars, funcs, ctx)
 
     case (node_vector)
-        allocate(items(size(node%args)))
+        nargs = size(tree%nodes(inode)%args)
         n = 0
-        do k = 1, size(items)
-            call eval_node(tree, node%args(k), vars, funcs, ctx, items(k))
+        do k = 1, nargs
+            c1 = tree%nodes(inode)%args(k)
+            call eval_node(tree, c1, vars, funcs, ctx)
             if (ctx%err%failed) return
-            n = n + size(items(k)%v)
+            n = n + size(tree%buf(c1)%v)
         end do
-        allocate(res%v(n))
-        if (nd > 0) allocate(res%d(n, nd))
+        call ensure(tree%buf(inode), n, nd)
         i = 0
-        do k = 1, size(items)
-            m = size(items(k)%v)
-            res%v(i+1:i+m) = items(k)%v
-            if (nd > 0) res%d(i+1:i+m, :) = items(k)%d
-            i = i + m
+        do k = 1, nargs
+            c1 = tree%nodes(inode)%args(k)
+            associate (a => tree%buf(c1), r => tree%buf(inode))
+                m = size(a%v)
+                r%v(i+1:i+m) = a%v
+                if (nd > 0) r%d(i+1:i+m, :) = a%d
+                i = i + m
+            end associate
         end do
 
     case (node_index)
-        call eval_node(tree, node%args(1), vars, funcs, ctx, a)
+        c1 = tree%nodes(inode)%args(1)
+        c2 = tree%nodes(inode)%args(2)
+        call eval_node(tree, c1, vars, funcs, ctx)
         if (ctx%err%failed) return
-        call eval_node(tree, node%args(2), vars, funcs, ctx, b)
+        call eval_node(tree, c2, vars, funcs, ctx)
         if (ctx%err%failed) return
-        if (size(b%v) /= 1) then
-            call ctx%err%set('index must be a scalar', node%pos)
-            return
-        end if
-        if (b%v(1) /= aint(b%v(1)) .or. abs(b%v(1)) > real(huge(1), wp)) then
-            call ctx%err%set('index must be an integer', node%pos)
-            return
-        end if
-        k = nint(b%v(1))
-        if (k < 1 .or. k > size(a%v)) then
-            call ctx%err%set('index '//int_to_str(k)//' is out of bounds (size is '//&
-                             int_to_str(size(a%v))//')', node%pos)
-            return
-        end if
-        res%v = a%v(k:k)
-        if (nd > 0) res%d = a%d(k:k, :)
+        associate (a => tree%buf(c1), b => tree%buf(c2), r => tree%buf(inode))
+            if (size(b%v) /= 1) then
+                call ctx%err%set('index must be a scalar', pos)
+                return
+            end if
+            if (b%v(1) /= aint(b%v(1)) .or. abs(b%v(1)) > real(huge(1), wp)) then
+                call ctx%err%set('index must be an integer', pos)
+                return
+            end if
+            k = nint(b%v(1))
+            if (k < 1 .or. k > size(a%v)) then
+                call ctx%err%set('index '//int_to_str(k)//' is out of bounds (size is '//&
+                                 int_to_str(size(a%v))//')', pos)
+                return
+            end if
+            call ensure(r, 1, nd)
+            r%v(1) = a%v(k)
+            if (nd > 0) r%d(1, :) = a%d(k, :)
+        end associate
 
     case default
-        call ctx%err%set('invalid expression tree', node%pos)
+        call ctx%err%set('invalid expression tree', pos)
     end select
-
-    end associate
 
     end subroutine eval_node
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
-!  Evaluate a binary operator. The operands must already have conforming sizes.
-
-    subroutine binary_op(op, a, b, ctx, pos, res)
-
-    integer, intent(in) :: op !! the operator
-    type(val_t), intent(in) :: a !! left operand
-    type(val_t), intent(in) :: b !! right operand
-    type(eval_ctx), intent(inout) :: ctx !! evaluation context
-    integer, intent(in) :: pos !! position in the expression
-    type(val_t), intent(out) :: res !! result
-
-    integer :: nd
-
-    nd = ctx%nd
-
-    select case (op)
-    case (op_add)
-        res%v = a%v + b%v
-        if (nd > 0) res%d = a%d + b%d
-    case (op_sub)
-        res%v = a%v - b%v
-        if (nd > 0) res%d = a%d - b%d
-    case (op_mul)
-        res%v = a%v * b%v
-        if (nd > 0) res%d = scale_rows(a%d, b%v) + scale_rows(b%d, a%v)
-    case (op_div)
-        if (ctx%check_domain .and. any(b%v == 0.0_wp)) then
-            call ctx%err%set('division by zero', pos)
-            return
-        end if
-        res%v = a%v / b%v
-        if (nd > 0) res%d = scale_rows(a%d - scale_rows(b%d, res%v), 1.0_wp / b%v)
-    case (op_pow)
-        call power(a, b, ctx, pos, res)
-    case (op_eq); call make_const(res, merge(1.0_wp, 0.0_wp, a%v == b%v), nd)
-    case (op_ne); call make_const(res, merge(1.0_wp, 0.0_wp, a%v /= b%v), nd)
-    case (op_lt); call make_const(res, merge(1.0_wp, 0.0_wp, a%v <  b%v), nd)
-    case (op_le); call make_const(res, merge(1.0_wp, 0.0_wp, a%v <= b%v), nd)
-    case (op_gt); call make_const(res, merge(1.0_wp, 0.0_wp, a%v >  b%v), nd)
-    case (op_ge); call make_const(res, merge(1.0_wp, 0.0_wp, a%v >= b%v), nd)
-    case (op_and)
-        call make_const(res, merge(1.0_wp, 0.0_wp, a%v /= 0.0_wp .and. b%v /= 0.0_wp), nd)
-    case (op_or)
-        call make_const(res, merge(1.0_wp, 0.0_wp, a%v /= 0.0_wp .or. b%v /= 0.0_wp), nd)
-    case default
-        call ctx%err%set('invalid operator', pos)
-    end select
-
-    end subroutine binary_op
-!*****************************************************************************************
-
-!*****************************************************************************************
-!>
-!  Evaluate `a^b`. The operands must already have conforming sizes.
-!  Integer-valued exponents are computed using integer powers, so that
-!  negative bases are allowed (e.g., `(-2)^3 = -8`).
-
-    subroutine power(a, b, ctx, pos, res)
-
-    type(val_t), intent(in) :: a !! base
-    type(val_t), intent(in) :: b !! exponent
-    type(eval_ctx), intent(inout) :: ctx !! evaluation context
-    integer, intent(in) :: pos !! position in the expression
-    type(val_t), intent(out) :: res !! result
-
-    integer :: i, m, nd
-    real(wp) :: da, db
-
-    nd = ctx%nd
-    m = size(a%v)
-
-    if (ctx%check_domain) then
-        do i = 1, m
-            if (a%v(i) == 0.0_wp .and. b%v(i) < 0.0_wp) then
-                call ctx%err%set('division by zero (zero raised to a negative power)', pos)
-                return
-            else if (a%v(i) < 0.0_wp .and. .not. is_integer(b%v(i))) then
-                call ctx%err%set('negative number raised to a non-integer power', pos)
-                return
-            end if
-        end do
-    end if
-
-    allocate(res%v(m))
-    do i = 1, m
-        res%v(i) = pow(a%v(i), b%v(i))
-    end do
-
-    if (nd > 0) then
-        allocate(res%d(m, nd))
-        do i = 1, m
-            if (b%v(i) == 0.0_wp) then
-                da = 0.0_wp
-            else
-                da = b%v(i) * pow(a%v(i), b%v(i) - 1.0_wp)
-            end if
-            if (a%v(i) > 0.0_wp) then
-                db = res%v(i) * log(a%v(i))
-            else
-                db = 0.0_wp
-            end if
-            res%d(i, :) = da * a%d(i, :) + db * b%d(i, :)
-        end do
-    end if
-
-    end subroutine power
-!*****************************************************************************************
-
-!*****************************************************************************************
-!>
-!  Scalar power function. Uses an integer power if the exponent is integer-valued.
-
-    pure elemental real(wp) function pow(a, b)
-    real(wp), intent(in) :: a, b
-    if (is_integer(b)) then
-        pow = a ** nint(b)
-    else
-        pow = a ** b
-    end if
-    end function pow
-!*****************************************************************************************
-
-!*****************************************************************************************
-!>
-!  Returns true if `x` is an integer value that fits in a default integer.
-
-    pure elemental logical function is_integer(x)
-    real(wp), intent(in) :: x
-    is_integer = abs(x) < real(huge(1), wp)
-    if (is_integer) is_integer = x == aint(x)
-    end function is_integer
-!*****************************************************************************************
-
-!*****************************************************************************************
-!>
 !  Evaluate a built-in function.
 
-    recursive subroutine eval_builtin(tree, inode, vars, funcs, ctx, res)
+    recursive subroutine eval_builtin(tree, inode, vars, funcs, ctx)
 
-    type(expr_tree), intent(in) :: tree !! the expression tree
+    type(expr_tree), intent(inout) :: tree !! the expression tree
     integer, intent(in) :: inode !! the node to evaluate
     type(val_t), dimension(:), intent(in) :: vars !! variable values
     type(user_function), dimension(:), intent(in) :: funcs !! user-defined functions
     type(eval_ctx), intent(inout) :: ctx !! evaluation context
-    type(val_t), intent(out) :: res !! the result
 
-    type(val_t) :: a, b, c
-    integer :: id, nd, k, i, m, n, pos
-    real(wp) :: r
+    integer :: id, nd, k, i, m, n, pos, nargs, c, c1, c2, c3, na, nb, ia, ib
+    real(wp) :: s
     real(wp), dimension(:), allocatable :: pre, suf
 
     nd = ctx%nd
+    id = tree%nodes(inode)%op
+    pos = tree%nodes(inode)%pos
+    nargs = size(tree%nodes(inode)%args)
 
-    associate (node => tree%nodes(inode))
-
-    id = node%op
-    pos = node%pos
-
-    select case (id)
-
-    case (fn_if)
+    ! evaluate the arguments:
+    if (id == fn_if) then
         ! if(a, b, cond): only the required branch is evaluated when cond is a scalar
-        call eval_node(tree, node%args(3), vars, funcs, ctx, c)
+        c1 = tree%nodes(inode)%args(1)
+        c2 = tree%nodes(inode)%args(2)
+        c3 = tree%nodes(inode)%args(3)
+        call eval_node(tree, c3, vars, funcs, ctx)
         if (ctx%err%failed) return
-        if (size(c%v) == 1) then
-            if (c%v(1) /= 0.0_wp) then
-                call eval_node(tree, node%args(1), vars, funcs, ctx, res)
+        if (size(tree%buf(c3)%v) == 1) then
+            if (tree%buf(c3)%v(1) /= 0.0_wp) then
+                c = c1
             else
-                call eval_node(tree, node%args(2), vars, funcs, ctx, res)
+                c = c2
             end if
-        else
-            m = size(c%v)
-            call eval_node(tree, node%args(1), vars, funcs, ctx, a)
+            call eval_node(tree, c, vars, funcs, ctx)
             if (ctx%err%failed) return
-            call eval_node(tree, node%args(2), vars, funcs, ctx, b)
-            if (ctx%err%failed) return
-            call expand(a, m, nd)
-            call expand(b, m, nd)
-            if (size(a%v) /= m .or. size(b%v) /= m) then
-                call ctx%err%set('incompatible sizes in if: condition has size '//int_to_str(m)//&
-                                 ', values have sizes '//int_to_str(size(a%v))//' and '//&
-                                 int_to_str(size(b%v)), pos)
-                return
-            end if
-            res%v = merge(a%v, b%v, c%v /= 0.0_wp)
-            if (nd > 0) then
-                allocate(res%d(m, nd))
-                do i = 1, m
-                    if (c%v(i) /= 0.0_wp) then
-                        res%d(i, :) = a%d(i, :)
-                    else
-                        res%d(i, :) = b%d(i, :)
-                    end if
-                end do
-            end if
+            call copy_val(tree%buf(c), tree%buf(inode), nd)
+            return
         end if
-        return
-
-    case (fn_max, fn_min)
-        call eval_node(tree, node%args(1), vars, funcs, ctx, res)
+        call eval_node(tree, c1, vars, funcs, ctx)
         if (ctx%err%failed) return
-        do k = 2, size(node%args)
-            call eval_node(tree, node%args(k), vars, funcs, ctx, b)
+        call eval_node(tree, c2, vars, funcs, ctx)
+        if (ctx%err%failed) return
+    else
+        do k = 1, nargs
+            call eval_node(tree, tree%nodes(inode)%args(k), vars, funcs, ctx)
             if (ctx%err%failed) return
-            call conform(res, b, ctx, pos)
-            if (ctx%err%failed) return
-            do i = 1, size(res%v)
-                if ((id == fn_max .and. b%v(i) > res%v(i)) .or. &
-                    (id == fn_min .and. b%v(i) < res%v(i))) then
-                    res%v(i) = b%v(i)
-                    if (nd > 0) res%d(i, :) = b%d(i, :)
-                end if
-            end do
         end do
-        return
-
-    end select
-
-    ! all other functions: evaluate the arguments first
-    call eval_node(tree, node%args(1), vars, funcs, ctx, a)
-    if (ctx%err%failed) return
-    if (size(node%args) > 1) then
-        call eval_node(tree, node%args(2), vars, funcs, ctx, b)
-        if (ctx%err%failed) return
+        c1 = tree%nodes(inode)%args(1)
+        c2 = c1
+        if (nargs > 1) c2 = tree%nodes(inode)%args(2)
     end if
-
-    end associate
 
     if (id <= fn_last_elemental) then
-        call elemental_1(id, a, ctx, pos, res)
+        call unary_fn(id, tree%buf(c1), ctx, pos, tree%buf(inode))
         return
     end if
+
+    associate (a => tree%buf(c1), b => tree%buf(c2), r => tree%buf(inode))
 
     n = size(a%v)
 
     select case (id)
 
+    case (fn_if) ! with a vector condition
+        associate (cond => tree%buf(c3))
+            m = size(cond%v)
+            na = size(a%v)
+            nb = size(b%v)
+            if ((na /= 1 .and. na /= m) .or. (nb /= 1 .and. nb /= m)) then
+                call ctx%err%set('incompatible sizes in if: condition has size '//int_to_str(m)//&
+                                 ', values have sizes '//int_to_str(na)//' and '//int_to_str(nb), pos)
+                return
+            end if
+            call ensure(r, m, nd)
+            do i = 1, m
+                if (cond%v(i) /= 0.0_wp) then
+                    ia = merge(1, i, na == 1)
+                    r%v(i) = a%v(ia)
+                    if (nd > 0) r%d(i, :) = a%d(ia, :)
+                else
+                    ib = merge(1, i, nb == 1)
+                    r%v(i) = b%v(ib)
+                    if (nd > 0) r%d(i, :) = b%d(ib, :)
+                end if
+            end do
+        end associate
+
+    case (fn_max, fn_min)
+        ! size of the result:
+        m = n
+        do k = 2, nargs
+            nb = size(tree%buf(tree%nodes(inode)%args(k))%v)
+            if (nb == m .or. nb == 1) cycle
+            if (m == 1) then
+                m = nb
+            else
+                call ctx%err%set('incompatible sizes ('//int_to_str(m)//' and '//int_to_str(nb)//')', pos)
+                return
+            end if
+        end do
+        call ensure(r, m, nd)
+        do i = 1, m
+            ia = merge(1, i, n == 1)
+            r%v(i) = a%v(ia)
+            if (nd > 0) r%d(i, :) = a%d(ia, :)
+        end do
+        do k = 2, nargs
+            associate (bk => tree%buf(tree%nodes(inode)%args(k)))
+                nb = size(bk%v)
+                do i = 1, m
+                    ib = merge(1, i, nb == 1)
+                    if ((id == fn_max .and. bk%v(ib) > r%v(i)) .or. &
+                        (id == fn_min .and. bk%v(ib) < r%v(i))) then
+                        r%v(i) = bk%v(ib)
+                        if (nd > 0) r%d(i, :) = bk%d(ib, :)
+                    end if
+                end do
+            end associate
+        end do
+
     case (fn_atan2, fn_mod, fn_modulo, fn_sign, fn_hypot)
-        call conform(a, b, ctx, pos)
-        if (ctx%err%failed) return
-        call elemental_2(id, a, b, ctx, pos, res)
+        call binary_op(fn_offset + id, a, b, ctx, pos, r)
 
     case (fn_sum)
-        res%v = [sum(a%v)]
-        if (nd > 0) res%d = reshape(sum(a%d, dim=1), [1, nd])
+        call ensure(r, 1, nd)
+        r%v(1) = sum(a%v)
+        if (nd > 0) r%d(1, :) = sum(a%d, dim=1)
 
     case (fn_product)
-        res%v = [product(a%v)]
+        call ensure(r, 1, nd)
+        r%v(1) = product(a%v)
         if (nd > 0) then
             ! d(prod)/d(a_i) = product of all a_j for j/=i
             allocate(pre(0:n), suf(1:n+1))
@@ -429,18 +341,22 @@
             do i = n, 1, -1
                 suf(i) = suf(i+1) * a%v(i)
             end do
-            allocate(res%d(1, nd), source=0.0_wp)
+            r%d = 0.0_wp
             do i = 1, n
-                res%d(1, :) = res%d(1, :) + pre(i-1) * suf(i+1) * a%d(i, :)
+                r%d(1, :) = r%d(1, :) + pre(i-1) * suf(i+1) * a%d(i, :)
             end do
         end if
 
     case (fn_norm2)
-        r = norm2(a%v)
-        res%v = [r]
+        call ensure(r, 1, nd)
+        s = norm2(a%v)
+        r%v(1) = s
         if (nd > 0) then
-            allocate(res%d(1, nd), source=0.0_wp)
-            if (r > 0.0_wp) res%d(1, :) = matmul(a%v, a%d) / r
+            if (s > 0.0_wp) then
+                r%d(1, :) = matmul(a%v, a%d) / s
+            else
+                r%d = 0.0_wp
+            end if
         end if
 
     case (fn_maxval, fn_minval)
@@ -453,11 +369,14 @@
         else
             k = minloc(a%v, dim=1)
         end if
-        res%v = a%v(k:k)
-        if (nd > 0) res%d = a%d(k:k, :)
+        call ensure(r, 1, nd)
+        r%v(1) = a%v(k)
+        if (nd > 0) r%d(1, :) = a%d(k, :)
 
     case (fn_size)
-        call make_const(res, [real(n, wp)], nd)
+        call ensure(r, 1, nd)
+        r%v(1) = real(n, wp)
+        if (nd > 0) r%d = 0.0_wp
 
     case (fn_dot)
         if (n /= size(b%v)) then
@@ -465,8 +384,9 @@
                              int_to_str(n)//' and '//int_to_str(size(b%v))//')', pos)
             return
         end if
-        res%v = [dot_product(a%v, b%v)]
-        if (nd > 0) res%d = reshape(matmul(b%v, a%d) + matmul(a%v, b%d), [1, nd])
+        call ensure(r, 1, nd)
+        r%v(1) = dot_product(a%v, b%v)
+        if (nd > 0) r%d(1, :) = matmul(b%v, a%d) + matmul(a%v, b%d)
 
     case (fn_cross)
         if (n /= 3 .or. size(b%v) /= 3) then
@@ -474,11 +394,11 @@
                              int_to_str(n)//' and '//int_to_str(size(b%v))//')', pos)
             return
         end if
-        res%v = cross3(a%v, b%v)
+        call ensure(r, 3, nd)
+        r%v = cross3(a%v, b%v)
         if (nd > 0) then
-            allocate(res%d(3, nd))
             do k = 1, nd
-                res%d(:, k) = cross3(a%d(:, k), b%v) + cross3(a%v, b%d(:, k))
+                r%d(:, k) = cross3(a%d(:, k), b%v) + cross3(a%v, b%d(:, k))
             end do
         end if
 
@@ -486,155 +406,414 @@
         call ctx%err%set('invalid function', pos)
     end select
 
+    end associate
+
     end subroutine eval_builtin
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
-!  Evaluate a one-argument elemental function.
+!  Evaluate a binary operation `r = a op b` (an operator, or a two-argument
+!  elemental function if `code > fn_offset`), with broadcasting of size-1 operands.
 
-    subroutine elemental_1(id, a, ctx, pos, res)
+    subroutine binary_op(code, a, b, ctx, pos, r)
+
+    integer, intent(in) :: code !! operation code (`op_*` or `fn_offset + fn_*`)
+    type(val_t), intent(in) :: a !! left operand
+    type(val_t), intent(in) :: b !! right operand
+    type(eval_ctx), intent(inout) :: ctx !! evaluation context
+    integer, intent(in) :: pos !! position in the expression
+    type(val_t), intent(inout) :: r !! result
+
+    integer :: na, nb, m, i, ia, ib, ierr, nd
+    real(wp) :: da, db
+
+    nd = ctx%nd
+    na = size(a%v)
+    nb = size(b%v)
+    if (na == nb) then
+        m = na
+    else if (na == 1) then
+        m = nb
+    else if (nb == 1) then
+        m = na
+    else
+        call ctx%err%set('incompatible sizes ('//int_to_str(na)//' and '//int_to_str(nb)//')', pos)
+        return
+    end if
+
+    if (ctx%check_domain .and. has_domain_check(code)) then
+        do i = 1, m
+            ia = merge(1, i, na == 1)
+            ib = merge(1, i, nb == 1)
+            ierr = binary_check(code, a%v(ia), b%v(ib))
+            if (ierr /= 0) then
+                call ctx%err%set(domain_message(ierr), pos)
+                return
+            end if
+        end do
+    end if
+
+    call ensure(r, m, nd)
+    if (na == nb) then
+        select case (code)
+        case (op_add); r%v = a%v + b%v
+        case (op_sub); r%v = a%v - b%v
+        case (op_mul); r%v = a%v * b%v
+        case (op_div); r%v = a%v / b%v
+        case default;  r%v = binary_value(code, a%v, b%v)
+        end select
+    else if (na == 1) then
+        select case (code)
+        case (op_add); r%v = a%v(1) + b%v
+        case (op_sub); r%v = a%v(1) - b%v
+        case (op_mul); r%v = a%v(1) * b%v
+        case (op_div); r%v = a%v(1) / b%v
+        case default;  r%v = binary_value(code, a%v(1), b%v)
+        end select
+    else
+        select case (code)
+        case (op_add); r%v = a%v + b%v(1)
+        case (op_sub); r%v = a%v - b%v(1)
+        case (op_mul); r%v = a%v * b%v(1)
+        case (op_div); r%v = a%v / b%v(1)
+        case default;  r%v = binary_value(code, a%v, b%v(1))
+        end select
+    end if
+
+    if (nd > 0) then
+        do i = 1, m
+            ia = merge(1, i, na == 1)
+            ib = merge(1, i, nb == 1)
+            call binary_partials(code, a%v(ia), b%v(ib), r%v(i), da, db)
+            r%d(i, :) = da * a%d(ia, :) + db * b%d(ib, :)
+        end do
+    end if
+
+    end subroutine binary_op
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Returns true if the binary operation has a domain check.
+
+    pure logical function has_domain_check(code)
+    integer, intent(in) :: code
+    select case (code)
+    case (op_div, op_pow, fn_offset + fn_atan2, fn_offset + fn_mod, fn_offset + fn_modulo)
+        has_domain_check = .true.
+    case default
+        has_domain_check = .false.
+    end select
+    end function has_domain_check
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Domain check for a binary operation. Returns a nonzero error code if there is an error.
+
+    pure integer function binary_check(code, x, y) result(ierr)
+    integer, intent(in) :: code
+    real(wp), intent(in) :: x, y
+    ierr = 0
+    select case (code)
+    case (op_div)
+        if (y == 0.0_wp) ierr = err_div_zero
+    case (op_pow)
+        if (x == 0.0_wp .and. y < 0.0_wp) then
+            ierr = err_pow_zero
+        else if (x < 0.0_wp .and. .not. is_integer(y)) then
+            ierr = err_pow_neg
+        end if
+    case (fn_offset + fn_atan2)
+        if (x == 0.0_wp .and. y == 0.0_wp) ierr = err_atan2
+    case (fn_offset + fn_mod, fn_offset + fn_modulo)
+        if (y == 0.0_wp) ierr = err_mod_zero
+    end select
+    end function binary_check
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Value of a binary operation.
+
+    pure elemental real(wp) function binary_value(code, x, y) result(f)
+    integer, intent(in) :: code
+    real(wp), intent(in) :: x, y
+    select case (code)
+    case (op_add); f = x + y
+    case (op_sub); f = x - y
+    case (op_mul); f = x * y
+    case (op_div); f = x / y
+    case (op_pow); f = pow(x, y)
+    case (op_eq);  f = merge(1.0_wp, 0.0_wp, x == y)
+    case (op_ne);  f = merge(1.0_wp, 0.0_wp, x /= y)
+    case (op_lt);  f = merge(1.0_wp, 0.0_wp, x <  y)
+    case (op_le);  f = merge(1.0_wp, 0.0_wp, x <= y)
+    case (op_gt);  f = merge(1.0_wp, 0.0_wp, x >  y)
+    case (op_ge);  f = merge(1.0_wp, 0.0_wp, x >= y)
+    case (op_and); f = merge(1.0_wp, 0.0_wp, x /= 0.0_wp .and. y /= 0.0_wp)
+    case (op_or);  f = merge(1.0_wp, 0.0_wp, x /= 0.0_wp .or. y /= 0.0_wp)
+    case (fn_offset + fn_atan2);  f = atan2(x, y)
+    case (fn_offset + fn_mod);    f = mod(x, y)
+    case (fn_offset + fn_modulo); f = modulo(x, y)
+    case (fn_offset + fn_sign);   f = sign(x, y)
+    case (fn_offset + fn_hypot);  f = hypot(x, y)
+    case default; f = 0.0_wp
+    end select
+    end function binary_value
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Partial derivatives `df/dx` and `df/dy` of a binary operation `f(x,y)`.
+
+    pure subroutine binary_partials(code, x, y, f, dx, dy)
+    integer, intent(in) :: code
+    real(wp), intent(in) :: x, y !! the operands
+    real(wp), intent(in) :: f !! the value `f(x,y)`
+    real(wp), intent(out) :: dx, dy !! the partial derivatives
+    real(wp) :: tmp
+    select case (code)
+    case (op_add); dx = 1.0_wp; dy = 1.0_wp
+    case (op_sub); dx = 1.0_wp; dy = -1.0_wp
+    case (op_mul); dx = y;      dy = x
+    case (op_div); dx = 1.0_wp / y; dy = -f / y
+    case (op_pow)
+        if (y == 0.0_wp) then
+            dx = 0.0_wp
+        else
+            dx = y * pow(x, y - 1.0_wp)
+        end if
+        if (x > 0.0_wp) then
+            dy = f * log(x)
+        else
+            dy = 0.0_wp
+        end if
+    case (fn_offset + fn_atan2)
+        tmp = x**2 + y**2
+        dx = y / tmp
+        dy = -x / tmp
+    case (fn_offset + fn_mod)
+        dx = 1.0_wp
+        dy = -aint(x / y)
+    case (fn_offset + fn_modulo)
+        dx = 1.0_wp
+        dy = -floor_r(x / y)
+    case (fn_offset + fn_sign)
+        dx = sign(1.0_wp, x) * sign(1.0_wp, y)
+        dy = 0.0_wp
+    case (fn_offset + fn_hypot)
+        if (f > 0.0_wp) then
+            dx = x / f
+            dy = y / f
+        else
+            dx = 0.0_wp
+            dy = 0.0_wp
+        end if
+    case default ! relational and logical operators
+        dx = 0.0_wp
+        dy = 0.0_wp
+    end select
+    end subroutine binary_partials
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Evaluate a one-argument elemental function `r = f(a)`.
+
+    subroutine unary_fn(id, a, ctx, pos, r)
 
     integer, intent(in) :: id !! function id
     type(val_t), intent(in) :: a !! argument
     type(eval_ctx), intent(inout) :: ctx !! evaluation context
     integer, intent(in) :: pos !! position in the expression
-    type(val_t), intent(out) :: res !! result
+    type(val_t), intent(inout) :: r !! result
 
-    real(wp), dimension(:), allocatable :: fp !! derivative of the function
+    integer :: i, n, ierr
+    real(wp) :: fp
 
-    if (ctx%check_domain) then
-        select case (id)
-        case (fn_sqrt)
-            if (any(a%v < 0.0_wp)) call ctx%err%set('sqrt of a negative number', pos)
-        case (fn_log)
-            if (any(a%v <= 0.0_wp)) call ctx%err%set('log of a non-positive number', pos)
-        case (fn_log10)
-            if (any(a%v <= 0.0_wp)) call ctx%err%set('log10 of a non-positive number', pos)
-        case (fn_asin)
-            if (any(abs(a%v) > 1.0_wp)) call ctx%err%set('asin argument outside [-1,1]', pos)
-        case (fn_acos)
-            if (any(abs(a%v) > 1.0_wp)) call ctx%err%set('acos argument outside [-1,1]', pos)
-        case (fn_acosh)
-            if (any(a%v < 1.0_wp)) call ctx%err%set('acosh argument less than 1', pos)
-        case (fn_atanh)
-            if (any(abs(a%v) >= 1.0_wp)) call ctx%err%set('atanh argument outside (-1,1)', pos)
-        end select
-        if (ctx%err%failed) return
+    n = size(a%v)
+
+    if (ctx%check_domain .and. has_unary_check(id)) then
+        do i = 1, n
+            ierr = unary_check(id, a%v(i))
+            if (ierr /= 0) then
+                call ctx%err%set(domain_message(ierr), pos)
+                return
+            end if
+        end do
     end if
 
-    select case (id)
-    case (fn_abs);     res%v = abs(a%v)
-    case (fn_sqrt);    res%v = sqrt(a%v)
-    case (fn_exp);     res%v = exp(a%v)
-    case (fn_log);     res%v = log(a%v)
-    case (fn_log10);   res%v = log10(a%v)
-    case (fn_sin);     res%v = sin(a%v)
-    case (fn_cos);     res%v = cos(a%v)
-    case (fn_tan);     res%v = tan(a%v)
-    case (fn_asin);    res%v = asin(a%v)
-    case (fn_acos);    res%v = acos(a%v)
-    case (fn_atan);    res%v = atan(a%v)
-    case (fn_sinh);    res%v = sinh(a%v)
-    case (fn_cosh);    res%v = cosh(a%v)
-    case (fn_tanh);    res%v = tanh(a%v)
-    case (fn_asinh);   res%v = asinh(a%v)
-    case (fn_acosh);   res%v = acosh(a%v)
-    case (fn_atanh);   res%v = atanh(a%v)
-    case (fn_erf);     res%v = erf(a%v)
-    case (fn_erfc);    res%v = erfc(a%v)
-    case (fn_floor);   res%v = floor_r(a%v)
-    case (fn_ceiling); res%v = -floor_r(-a%v)
-    case (fn_nint);    res%v = anint(a%v)
-    case (fn_aint);    res%v = aint(a%v)
-    end select
+    call ensure(r, n, ctx%nd)
+    call unary_array(id, a%v, r%v)
 
     if (ctx%nd > 0) then
-        select case (id)
-        case (fn_abs);     fp = sign(1.0_wp, a%v)
-        case (fn_sqrt);    fp = 0.5_wp / res%v
-        case (fn_exp);     fp = res%v
-        case (fn_log);     fp = 1.0_wp / a%v
-        case (fn_log10);   fp = 1.0_wp / (a%v * log(10.0_wp))
-        case (fn_sin);     fp = cos(a%v)
-        case (fn_cos);     fp = -sin(a%v)
-        case (fn_tan);     fp = 1.0_wp + res%v**2
-        case (fn_asin);    fp = 1.0_wp / sqrt(1.0_wp - a%v**2)
-        case (fn_acos);    fp = -1.0_wp / sqrt(1.0_wp - a%v**2)
-        case (fn_atan);    fp = 1.0_wp / (1.0_wp + a%v**2)
-        case (fn_sinh);    fp = cosh(a%v)
-        case (fn_cosh);    fp = sinh(a%v)
-        case (fn_tanh);    fp = 1.0_wp - res%v**2
-        case (fn_asinh);   fp = 1.0_wp / sqrt(a%v**2 + 1.0_wp)
-        case (fn_acosh);   fp = 1.0_wp / sqrt(a%v**2 - 1.0_wp)
-        case (fn_atanh);   fp = 1.0_wp / (1.0_wp - a%v**2)
-        case (fn_erf);     fp = 2.0_wp / sqrt(pi) * exp(-a%v**2)
-        case (fn_erfc);    fp = -2.0_wp / sqrt(pi) * exp(-a%v**2)
-        case default;      fp = spread(0.0_wp, 1, size(a%v)) ! piecewise constant functions
-        end select
-        res%d = scale_rows(a%d, fp)
+        do i = 1, n
+            fp = unary_derivative(id, a%v(i), r%v(i))
+            r%d(i, :) = fp * a%d(i, :)
+        end do
     end if
 
-    end subroutine elemental_1
+    end subroutine unary_fn
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
-!  Evaluate a two-argument elemental function.
-!  The arguments must already have conforming sizes.
+!  Returns true if the one-argument function has a domain check.
 
-    subroutine elemental_2(id, a, b, ctx, pos, res)
-
-    integer, intent(in) :: id !! function id
-    type(val_t), intent(in) :: a !! first argument
-    type(val_t), intent(in) :: b !! second argument
-    type(eval_ctx), intent(inout) :: ctx !! evaluation context
-    integer, intent(in) :: pos !! position in the expression
-    type(val_t), intent(out) :: res !! result
-
-    real(wp), dimension(:), allocatable :: tmp
-    integer :: nd
-
-    nd = ctx%nd
-
+    pure logical function has_unary_check(id)
+    integer, intent(in) :: id
     select case (id)
-    case (fn_atan2)
-        if (ctx%check_domain .and. any(a%v == 0.0_wp .and. b%v == 0.0_wp)) then
-            call ctx%err%set('atan2 arguments are both zero', pos)
-            return
-        end if
-        res%v = atan2(a%v, b%v)
-        if (nd > 0) then
-            tmp = 1.0_wp / (a%v**2 + b%v**2)
-            res%d = scale_rows(scale_rows(a%d, b%v) - scale_rows(b%d, a%v), tmp)
-        end if
-    case (fn_mod, fn_modulo)
-        if (ctx%check_domain .and. any(b%v == 0.0_wp)) then
-            call ctx%err%set('division by zero in mod/modulo', pos)
-            return
-        end if
-        if (id == fn_mod) then
-            res%v = mod(a%v, b%v)
-            if (nd > 0) tmp = aint(a%v / b%v)
-        else
-            res%v = modulo(a%v, b%v)
-            if (nd > 0) tmp = floor_r(a%v / b%v)
-        end if
-        if (nd > 0) res%d = a%d - scale_rows(b%d, tmp)
-    case (fn_sign)
-        res%v = sign(a%v, b%v)
-        if (nd > 0) res%d = scale_rows(a%d, sign(1.0_wp, a%v) * sign(1.0_wp, b%v))
-    case (fn_hypot)
-        res%v = hypot(a%v, b%v)
-        if (nd > 0) then
-            tmp = merge(1.0_wp / res%v, 0.0_wp, res%v > 0.0_wp)
-            res%d = scale_rows(scale_rows(a%d, a%v) + scale_rows(b%d, b%v), tmp)
-        end if
+    case (fn_sqrt, fn_log, fn_log10, fn_asin, fn_acos, fn_acosh, fn_atanh)
+        has_unary_check = .true.
     case default
-        call ctx%err%set('invalid function', pos)
+        has_unary_check = .false.
     end select
+    end function has_unary_check
+!*****************************************************************************************
 
-    end subroutine elemental_2
+!*****************************************************************************************
+!>
+!  Value of a one-argument elemental function for an array
+!  (the function is selected once, outside the loop over the elements).
+
+    pure subroutine unary_array(id, x, f)
+    integer, intent(in) :: id
+    real(wp), dimension(:), intent(in) :: x
+    real(wp), dimension(:), intent(out) :: f
+    select case (id)
+    case (fn_abs);     f = abs(x)
+    case (fn_sqrt);    f = sqrt(x)
+    case (fn_exp);     f = exp(x)
+    case (fn_log);     f = log(x)
+    case (fn_log10);   f = log10(x)
+    case (fn_sin);     f = sin(x)
+    case (fn_cos);     f = cos(x)
+    case (fn_tan);     f = tan(x)
+    case (fn_asin);    f = asin(x)
+    case (fn_acos);    f = acos(x)
+    case (fn_atan);    f = atan(x)
+    case (fn_sinh);    f = sinh(x)
+    case (fn_cosh);    f = cosh(x)
+    case (fn_tanh);    f = tanh(x)
+    case default;      f = unary_value(id, x)
+    end select
+    end subroutine unary_array
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Domain check for a one-argument function. Returns a nonzero error code if there is an error.
+
+    pure integer function unary_check(id, x) result(ierr)
+    integer, intent(in) :: id
+    real(wp), intent(in) :: x
+    ierr = 0
+    select case (id)
+    case (fn_sqrt);  if (x < 0.0_wp) ierr = err_sqrt
+    case (fn_log);   if (x <= 0.0_wp) ierr = err_log
+    case (fn_log10); if (x <= 0.0_wp) ierr = err_log10
+    case (fn_asin);  if (abs(x) > 1.0_wp) ierr = err_asin
+    case (fn_acos);  if (abs(x) > 1.0_wp) ierr = err_acos
+    case (fn_acosh); if (x < 1.0_wp) ierr = err_acosh
+    case (fn_atanh); if (abs(x) >= 1.0_wp) ierr = err_atanh
+    end select
+    end function unary_check
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Value of a one-argument elemental function.
+
+    pure elemental real(wp) function unary_value(id, x) result(f)
+    integer, intent(in) :: id
+    real(wp), intent(in) :: x
+    select case (id)
+    case (fn_abs);     f = abs(x)
+    case (fn_sqrt);    f = sqrt(x)
+    case (fn_exp);     f = exp(x)
+    case (fn_log);     f = log(x)
+    case (fn_log10);   f = log10(x)
+    case (fn_sin);     f = sin(x)
+    case (fn_cos);     f = cos(x)
+    case (fn_tan);     f = tan(x)
+    case (fn_asin);    f = asin(x)
+    case (fn_acos);    f = acos(x)
+    case (fn_atan);    f = atan(x)
+    case (fn_sinh);    f = sinh(x)
+    case (fn_cosh);    f = cosh(x)
+    case (fn_tanh);    f = tanh(x)
+    case (fn_asinh);   f = asinh(x)
+    case (fn_acosh);   f = acosh(x)
+    case (fn_atanh);   f = atanh(x)
+    case (fn_erf);     f = erf(x)
+    case (fn_erfc);    f = erfc(x)
+    case (fn_floor);   f = floor_r(x)
+    case (fn_ceiling); f = -floor_r(-x)
+    case (fn_nint);    f = anint(x)
+    case (fn_aint);    f = aint(x)
+    case default;      f = 0.0_wp
+    end select
+    end function unary_value
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Derivative of a one-argument elemental function.
+
+    pure real(wp) function unary_derivative(id, x, f) result(fp)
+    integer, intent(in) :: id
+    real(wp), intent(in) :: x !! the argument
+    real(wp), intent(in) :: f !! the function value `f(x)`
+    select case (id)
+    case (fn_abs);   fp = sign(1.0_wp, x)
+    case (fn_sqrt);  fp = 0.5_wp / f
+    case (fn_exp);   fp = f
+    case (fn_log);   fp = 1.0_wp / x
+    case (fn_log10); fp = 1.0_wp / (x * log(10.0_wp))
+    case (fn_sin);   fp = cos(x)
+    case (fn_cos);   fp = -sin(x)
+    case (fn_tan);   fp = 1.0_wp + f**2
+    case (fn_asin);  fp = 1.0_wp / sqrt(1.0_wp - x**2)
+    case (fn_acos);  fp = -1.0_wp / sqrt(1.0_wp - x**2)
+    case (fn_atan);  fp = 1.0_wp / (1.0_wp + x**2)
+    case (fn_sinh);  fp = cosh(x)
+    case (fn_cosh);  fp = sinh(x)
+    case (fn_tanh);  fp = 1.0_wp - f**2
+    case (fn_asinh); fp = 1.0_wp / sqrt(x**2 + 1.0_wp)
+    case (fn_acosh); fp = 1.0_wp / sqrt(x**2 - 1.0_wp)
+    case (fn_atanh); fp = 1.0_wp / (1.0_wp - x**2)
+    case (fn_erf);   fp = 2.0_wp / sqrt(pi) * exp(-x**2)
+    case (fn_erfc);  fp = -2.0_wp / sqrt(pi) * exp(-x**2)
+    case default;    fp = 0.0_wp ! piecewise constant functions
+    end select
+    end function unary_derivative
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Error message for a domain error code.
+
+    pure function domain_message(ierr) result(msg)
+    integer, intent(in) :: ierr
+    character(len=:), allocatable :: msg
+    select case (ierr)
+    case (err_div_zero); msg = 'division by zero'
+    case (err_pow_zero); msg = 'division by zero (zero raised to a negative power)'
+    case (err_pow_neg);  msg = 'negative number raised to a non-integer power'
+    case (err_atan2);    msg = 'atan2 arguments are both zero'
+    case (err_mod_zero); msg = 'division by zero in mod/modulo'
+    case (err_sqrt);     msg = 'sqrt of a negative number'
+    case (err_log);      msg = 'log of a non-positive number'
+    case (err_log10);    msg = 'log10 of a non-positive number'
+    case (err_asin);     msg = 'asin argument outside [-1,1]'
+    case (err_acos);     msg = 'acos argument outside [-1,1]'
+    case (err_acosh);    msg = 'acosh argument less than 1'
+    case (err_atanh);    msg = 'atanh argument outside (-1,1)'
+    case default;        msg = 'domain error'
+    end select
+    end function domain_message
 !*****************************************************************************************
 
 !*****************************************************************************************
@@ -642,80 +821,78 @@
 !  Evaluate a user-defined function. If derivatives are requested and the
 !  function does not have a derivative routine, central finite differences are used.
 
-    recursive subroutine eval_user(tree, inode, vars, funcs, ctx, res)
+    recursive subroutine eval_user(tree, inode, vars, funcs, ctx)
 
-    type(expr_tree), intent(in) :: tree !! the expression tree
+    type(expr_tree), intent(inout) :: tree !! the expression tree
     integer, intent(in) :: inode !! the node to evaluate
     type(val_t), dimension(:), intent(in) :: vars !! variable values
     type(user_function), dimension(:), intent(in) :: funcs !! user-defined functions
     type(eval_ctx), intent(inout) :: ctx !! evaluation context
-    type(val_t), intent(out) :: res !! the result
 
-    type(val_t), dimension(:), allocatable :: argv
     type(fparse_value), dimension(:), allocatable :: uargs
-    real(wp), dimension(:), allocatable :: r
+    real(wp), dimension(:), allocatable :: res
     real(wp), dimension(:,:), allocatable :: jac
-    integer :: k, nargs, ifunc, stat, m, pos
+    integer :: k, nargs, ifunc, stat, m, pos, c
 
-    associate (node => tree%nodes(inode))
-
-    ifunc = node%op
-    pos = node%pos
-    nargs = size(node%args)
-    allocate(argv(nargs), uargs(nargs))
+    ifunc = tree%nodes(inode)%op
+    pos = tree%nodes(inode)%pos
+    nargs = size(tree%nodes(inode)%args)
+    allocate(uargs(nargs))
     do k = 1, nargs
-        call eval_node(tree, node%args(k), vars, funcs, ctx, argv(k))
+        c = tree%nodes(inode)%args(k)
+        call eval_node(tree, c, vars, funcs, ctx)
         if (ctx%err%failed) return
-        uargs(k)%v = argv(k)%v
+        uargs(k)%v = tree%buf(c)%v
     end do
 
-    end associate
-
-    associate (f => funcs(ifunc))
+    associate (f => funcs(ifunc), r => tree%buf(inode))
 
     stat = 0
-    call f%f(uargs, r, stat)
+    call f%f(uargs, res, stat)
     if (stat /= 0) then
         call ctx%err%set('function "'//f%name//'" returned error code '//int_to_str(stat), pos)
         return
     end if
-    if (.not. allocated(r)) then
+    if (.not. allocated(res)) then
         call ctx%err%set('function "'//f%name//'" did not return a result', pos)
         return
     end if
-    m = size(r)
-    call move_alloc(r, res%v)
+    m = size(res)
+    call ensure(r, m, ctx%nd)
+    r%v = res
 
     if (ctx%nd > 0) then
-        allocate(res%d(m, ctx%nd), source=0.0_wp)
+        r%d = 0.0_wp
         do k = 1, nargs
-            if (all(argv(k)%d == 0.0_wp)) cycle ! no contribution
-            stat = 0
-            if (associated(f%df)) then
-                call f%df(uargs, k, jac, stat)
-                if (stat /= 0) then
+            associate (arg => tree%buf(tree%nodes(inode)%args(k)))
+                if (all(arg%d == 0.0_wp)) cycle ! no contribution
+                stat = 0
+                if (associated(f%df)) then
+                    call f%df(uargs, k, jac, stat)
+                    if (stat /= 0) then
+                        call ctx%err%set('derivative of function "'//f%name//&
+                                        '" returned error code '//int_to_str(stat), pos)
+                        return
+                    end if
+                else
+                    call fd_jacobian(f, uargs, k, m, jac, stat)
+                    if (stat /= 0) then
+                        call ctx%err%set('error computing finite-difference derivative of function "'//&
+                                        f%name//'"', pos)
+                        return
+                    end if
+                end if
+                if (.not. allocated(jac)) then
+                    call ctx%err%set('derivative of function "'//f%name//'" did not return a result', pos)
+                    return
+                end if
+                if (size(jac, 1) /= m .or. size(jac, 2) /= size(uargs(k)%v)) then
                     call ctx%err%set('derivative of function "'//f%name//&
-                                     '" returned error code '//int_to_str(stat), pos)
+                                    '" returned a jacobian with the wrong shape', pos)
                     return
                 end if
-            else
-                call fd_jacobian(f, uargs, k, m, jac, stat)
-                if (stat /= 0) then
-                    call ctx%err%set('error computing finite-difference derivative of function "'//&
-                                     f%name//'"', pos)
-                    return
-                end if
-            end if
-            if (.not. allocated(jac)) then
-                call ctx%err%set('derivative of function "'//f%name//'" did not return a result', pos)
-                return
-            end if
-            if (size(jac, 1) /= m .or. size(jac, 2) /= size(uargs(k)%v)) then
-                call ctx%err%set('derivative of function "'//f%name//&
-                                 '" returned a jacobian with the wrong shape', pos)
-                return
-            end if
-            res%d = res%d + matmul(jac, argv(k)%d)
+                r%d = r%d + matmul(jac, arg%d)
+            end associate
         end do
     end if
 
@@ -775,89 +952,80 @@
 
 !*****************************************************************************************
 !>
-!  Create a constant value (with a zero derivative if `nd>0`).
+!  Make sure a value buffer has size `m` (and derivative shape `[m, nd]` if `nd>0`).
+!  It is only reallocated if the size has changed.
 
-    pure subroutine make_const(res, v, nd)
+    pure subroutine ensure(r, m, nd)
 
-    type(val_t), intent(out) :: res !! the result
-    real(wp), dimension(:), intent(in) :: v !! the value
+    type(val_t), intent(inout) :: r !! the value buffer
+    integer, intent(in) :: m !! required size
     integer, intent(in) :: nd !! number of derivative columns
 
-    res%v = v
-    if (nd > 0) allocate(res%d(size(v), nd), source=0.0_wp)
-
-    end subroutine make_const
-!*****************************************************************************************
-
-!*****************************************************************************************
-!>
-!  If the value has size 1, broadcast it to size `m`.
-
-    pure subroutine expand(a, m, nd)
-
-    type(val_t), intent(inout) :: a !! the value
-    integer, intent(in) :: m !! the new size
-    integer, intent(in) :: nd !! number of derivative columns
-
-    real(wp) :: s
-    real(wp), dimension(:), allocatable :: row
-
-    if (size(a%v) /= 1 .or. m == 1) return
-    s = a%v(1)
-    a%v = spread(s, 1, m)
-    if (nd > 0) then
-        row = a%d(1, :)
-        a%d = spread(row, 1, m)
-    end if
-
-    end subroutine expand
-!*****************************************************************************************
-
-!*****************************************************************************************
-!>
-!  Make the sizes of two values conform: a size-1 value is broadcast to
-!  the size of the other. Otherwise the sizes must be equal.
-
-    subroutine conform(a, b, ctx, pos)
-
-    type(val_t), intent(inout) :: a !! first value
-    type(val_t), intent(inout) :: b !! second value
-    type(eval_ctx), intent(inout) :: ctx !! evaluation context
-    integer, intent(in) :: pos !! position in the expression
-
-    integer :: na, nb
-
-    na = size(a%v)
-    nb = size(b%v)
-    if (na == nb) return
-    if (na == 1) then
-        call expand(a, nb, ctx%nd)
-    else if (nb == 1) then
-        call expand(b, na, ctx%nd)
+    if (allocated(r%v)) then
+        if (size(r%v) /= m) then
+            deallocate(r%v)
+            allocate(r%v(m))
+        end if
     else
-        call ctx%err%set('incompatible sizes ('//int_to_str(na)//' and '//int_to_str(nb)//')', pos)
+        allocate(r%v(m))
+    end if
+    if (nd > 0) then
+        if (allocated(r%d)) then
+            if (size(r%d, 1) /= m .or. size(r%d, 2) /= nd) then
+                deallocate(r%d)
+                allocate(r%d(m, nd))
+            end if
+        else
+            allocate(r%d(m, nd))
+        end if
     end if
 
-    end subroutine conform
+    end subroutine ensure
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
-!  Multiply each row `i` of the matrix `d` by `f(i)`.
+!  Copy a value (and its derivative if `nd>0`) into a buffer.
 
-    pure function scale_rows(d, f) result(r)
+    pure subroutine copy_val(src, dst, nd)
 
-    real(wp), dimension(:,:), intent(in) :: d
-    real(wp), dimension(:), intent(in) :: f
-    real(wp), dimension(size(d,1), size(d,2)) :: r
+    type(val_t), intent(in) :: src
+    type(val_t), intent(inout) :: dst
+    integer, intent(in) :: nd
 
-    integer :: j
+    call ensure(dst, size(src%v), nd)
+    dst%v = src%v
+    if (nd > 0) dst%d = src%d
 
-    do j = 1, size(d, 2)
-        r(:, j) = d(:, j) * f
-    end do
+    end subroutine copy_val
+!*****************************************************************************************
 
-    end function scale_rows
+!*****************************************************************************************
+!>
+!  Scalar power function. Uses an integer power if the exponent is integer-valued,
+!  so that negative bases are allowed (e.g., `(-2)^3 = -8`).
+
+    pure elemental real(wp) function pow(a, b)
+    real(wp), intent(in) :: a, b
+    if (b == 2.0_wp) then
+        pow = a * a
+    else if (is_integer(b)) then
+        pow = a ** nint(b)
+    else
+        pow = a ** b
+    end if
+    end function pow
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Returns true if `x` is an integer value that fits in a default integer.
+
+    pure elemental logical function is_integer(x)
+    real(wp), intent(in) :: x
+    is_integer = abs(x) < real(huge(1), wp)
+    if (is_integer) is_integer = x == aint(x)
+    end function is_integer
 !*****************************************************************************************
 
 !*****************************************************************************************

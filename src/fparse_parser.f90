@@ -76,6 +76,8 @@
         integer :: n_nodes = 0 !! number of nodes used
         integer :: root = 0 !! index of the root node
         integer, dimension(:), allocatable :: refs !! indices of the variables referenced by the expression
+        type(val_t), dimension(:), allocatable :: buf !! work buffers: the value of each node
+                                                      !! (reused between evaluations to avoid reallocation)
     end type expr_tree
 
     type :: parser_t
@@ -138,6 +140,7 @@
     call move_alloc(p%tree%refs, tree%refs)
     tree%n_nodes = p%tree%n_nodes
     tree%root = root
+    allocate(tree%buf(tree%n_nodes))
 
     end subroutine parse_expression
 !*****************************************************************************************

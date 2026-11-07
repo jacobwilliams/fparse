@@ -20,6 +20,13 @@
         character(len=:), allocatable :: str
     end type string_t
 
+    type, public :: val_t
+        !! A value (and optionally its derivative). Scalars are arrays of size 1.
+        real(wp), dimension(:), allocatable :: v !! the value
+        real(wp), dimension(:,:), allocatable :: d !! the derivative `[size(v), nd]`
+                                                    !! (only used if derivatives are being computed)
+    end type val_t
+
     type, public :: error_t
         !! Error status information.
         logical :: failed = .false. !! true if an error has occurred

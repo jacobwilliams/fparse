@@ -54,6 +54,7 @@
     use fparse_functions
     use fparse_parser
     use fparse_eval
+    use fparse_bytecode
 
     implicit none
 
@@ -71,6 +72,8 @@
                                                             !! Anonymous outputs have empty names.
         type(string_t), dimension(:), allocatable :: expressions !! the expression strings
         type(expr_tree), dimension(:), allocatable :: trees !! the parsed expressions
+        type(scalar_program), dimension(:), allocatable :: progs !! the expressions compiled for fast
+                                                                 !! scalar evaluation
         integer, dimension(:), allocatable :: order !! evaluation order of the expressions
         type(val_t), dimension(:), allocatable :: vals !! values of all the variables (inputs, then outputs)
         logical, dimension(:), allocatable :: is_set !! if each input variable has been set
@@ -79,8 +82,11 @@
         logical :: evaluated = .false. !! if the expressions have been evaluated
         integer :: nd = 0 !! total number of derivative columns
         integer, dimension(:), allocatable :: wrt !! input variable indices for derivatives
+        type(string_t), dimension(:), allocatable :: wrt_names !! the `wrt` argument of the last
+                                                               !! call to [[fparser:evaluate]]
         integer, dimension(:), allocatable :: wrt_offset !! column offsets in the derivative matrices
         logical :: check_domain = .true. !! check for domain errors during evaluation
+        logical :: use_scalar_programs = .true. !! use the fast scalar evaluator when possible
         type(error_t) :: err !! error status
     contains
         private
@@ -105,6 +111,7 @@
         procedure, public :: output_name
         procedure, public :: evaluation_order
         procedure, public :: set_domain_checking
+        procedure, public :: set_scalar_optimization
         procedure, public :: destroy
         procedure :: set_scalar_by_name, set_vector_by_name, set_scalar_by_index, set_vector_by_index
         procedure :: get_scalar_by_name, get_vector_by_name, get_scalar_by_index, get_vector_by_index
@@ -210,6 +217,23 @@
 
 !*****************************************************************************************
 !>
+!  Enable or disable the fast scalar evaluator (it is enabled by default).
+!  When enabled, expressions whose variables are all scalars are evaluated
+!  with a compiled scalar program if no derivatives are requested. The
+!  results are the same either way; this is mostly useful for testing.
+
+    subroutine set_scalar_optimization(me, use)
+
+    class(fparser), intent(inout) :: me
+    logical, intent(in) :: use
+
+    me%use_scalar_programs = use
+
+    end subroutine set_scalar_optimization
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
 !  Add a user-defined function. This must be called before [[fparser:parse]].
 !  User-defined functions take precedence over built-in functions with the
 !  same name. If a function with the same name has already been added, it
@@ -292,6 +316,7 @@
     if (allocated(me%names)) deallocate(me%names)
     if (allocated(me%expressions)) deallocate(me%expressions)
     if (allocated(me%trees)) deallocate(me%trees)
+    if (allocated(me%progs)) deallocate(me%progs)
     if (allocated(me%order)) deallocate(me%order)
     if (allocated(me%vals)) deallocate(me%vals)
     if (allocated(me%is_set)) deallocate(me%is_set)
@@ -370,6 +395,12 @@
         ! determine the evaluation order:
         call me%sort_expressions()
         if (me%err%failed) exit main
+
+        ! compile for fast scalar evaluation:
+        allocate(me%progs(nout))
+        do i = 1, nout
+            call compile_scalar(me%trees(i), me%progs(i))
+        end do
 
         allocate(me%vals(nin + nout))
         allocate(me%is_set(nin), source=.false.)
@@ -675,14 +706,10 @@
     character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
 
     type(eval_ctx) :: ctx
-    type(val_t) :: res
-    integer :: i, j, k, n, nin, idx, off
+    integer :: i, j, k, n, nin, idx, off, nwrt
 
     call me%err%clear()
     me%evaluated = .false.
-    me%nd = 0
-    if (allocated(me%wrt)) deallocate(me%wrt)
-    if (allocated(me%wrt_offset)) deallocate(me%wrt_offset)
     nin = me%n_inputs
 
     main: block
@@ -692,71 +719,146 @@
             exit main
         end if
 
-        do i = 1, nin
-            if (.not. me%is_set(i)) then
-                call me%err%set('variable "'//me%names(i)%str//'" has not been set')
-                exit main
-            end if
-        end do
-
-        ! set up the derivatives:
-        allocate(me%wrt(0), me%wrt_offset(0))
-        if (present(wrt)) then
-            off = 0
-            do k = 1, size(wrt)
-                idx = me%find_variable(to_lower(trim(adjustl(wrt(k)))), nin)
-                if (idx == 0) then
-                    call me%err%set('cannot compute derivative with respect to "'//trim(wrt(k))//&
-                                    '": not an input variable')
-                    exit main
-                end if
-                if (any(me%wrt == idx)) then
-                    call me%err%set('duplicate derivative variable "'//trim(wrt(k))//'"')
-                    exit main
-                end if
-                me%wrt = [me%wrt, idx]
-                me%wrt_offset = [me%wrt_offset, off]
-                off = off + size(me%vals(idx)%v)
-            end do
-            me%nd = off
+        if (.not. all(me%is_set)) then
+            i = findloc(me%is_set, .false., dim=1)
+            call me%err%set('variable "'//me%names(i)%str//'" has not been set')
+            exit main
         end if
 
-        do i = 1, nin
-            if (allocated(me%vals(i)%d)) deallocate(me%vals(i)%d)
-            if (size(me%wrt) > 0) then
-                n = size(me%vals(i)%v)
-                allocate(me%vals(i)%d(n, me%nd), source=0.0_wp)
-                do k = 1, size(me%wrt)
-                    if (me%wrt(k) == i) then
-                        do j = 1, n
-                            me%vals(i)%d(j, me%wrt_offset(k) + j) = 1.0_wp
-                        end do
+        ! set up the derivatives:
+        nwrt = 0
+        if (present(wrt)) nwrt = size(wrt)
+        if (nwrt > 0) then
+            if (.not. same_wrt()) then
+                if (allocated(me%wrt_names)) deallocate(me%wrt_names)
+                me%nd = 0
+                me%wrt = [integer ::]
+                me%wrt_offset = [integer ::]
+                off = 0
+                do k = 1, nwrt
+                    idx = me%find_variable(to_lower(trim(adjustl(wrt(k)))), nin)
+                    if (idx == 0) then
+                        call me%err%set('cannot compute derivative with respect to "'//trim(wrt(k))//&
+                                        '": not an input variable')
+                        exit main
                     end if
+                    if (any(me%wrt == idx)) then
+                        call me%err%set('duplicate derivative variable "'//trim(wrt(k))//'"')
+                        exit main
+                    end if
+                    me%wrt = [me%wrt, idx]
+                    me%wrt_offset = [me%wrt_offset, off]
+                    off = off + size(me%vals(idx)%v)
+                end do
+                me%nd = off
+                ! seed the input derivatives:
+                do i = 1, nin
+                    n = size(me%vals(i)%v)
+                    if (allocated(me%vals(i)%d)) deallocate(me%vals(i)%d)
+                    allocate(me%vals(i)%d(n, me%nd), source=0.0_wp)
+                    do k = 1, nwrt
+                        if (me%wrt(k) == i) then
+                            do j = 1, n
+                                me%vals(i)%d(j, me%wrt_offset(k) + j) = 1.0_wp
+                            end do
+                        end if
+                    end do
+                end do
+                allocate(me%wrt_names(nwrt))
+                do k = 1, nwrt
+                    me%wrt_names(k)%str = trim(wrt(k))
                 end do
             end if
-        end do
+        else if (me%nd > 0 .or. .not. allocated(me%wrt)) then
+            ! no derivatives (clear any from a previous evaluation)
+            me%nd = 0
+            me%wrt = [integer ::]
+            me%wrt_offset = [integer ::]
+            if (allocated(me%wrt_names)) deallocate(me%wrt_names)
+            do i = 1, size(me%vals)
+                if (allocated(me%vals(i)%d)) deallocate(me%vals(i)%d)
+            end do
+        end if
 
         ! evaluate the expressions:
         ctx%nd = me%nd
         ctx%check_domain = me%check_domain
         do k = 1, me%n_outputs
             i = me%order(k)
-            call eval_tree(me%trees(i), me%vals, me%funcs, ctx, res)
-            if (ctx%err%failed) then
-                call me%err%set('error evaluating expression '//int_to_str(i)//' "'//&
-                                me%expressions(i)%str//'": '//ctx%err%message, ctx%err%pos)
-                exit main
+            if (use_scalar_program(i)) then
+                if (me%nd > 0) then
+                    call exec_scalar_d(me%progs(i), me%vals, ctx)
+                else
+                    call exec_scalar(me%progs(i), me%vals, ctx)
+                end if
+                if (ctx%err%failed) exit
+                associate (o => me%vals(nin + i), prog => me%progs(i))
+                    if (allocated(o%v)) then
+                        if (size(o%v) /= 1) deallocate(o%v)
+                    end if
+                    if (.not. allocated(o%v)) allocate(o%v(1))
+                    o%v(1) = prog%s(prog%root)
+                    if (me%nd > 0) then
+                        if (allocated(o%d)) then
+                            if (size(o%d, 1) /= 1 .or. size(o%d, 2) /= me%nd) deallocate(o%d)
+                        end if
+                        if (.not. allocated(o%d)) allocate(o%d(1, me%nd))
+                        o%d(1, :) = prog%sd(:, prog%root)
+                    end if
+                end associate
+            else
+                call eval_tree(me%trees(i), me%vals, me%funcs, ctx)
+                if (ctx%err%failed) exit
+                associate (r => me%trees(i)%buf(me%trees(i)%root), o => me%vals(nin + i))
+                    o%v = r%v
+                    if (me%nd > 0) o%d = r%d
+                end associate
             end if
-            call move_alloc(res%v, me%vals(nin + i)%v)
-            if (allocated(me%vals(nin + i)%d)) deallocate(me%vals(nin + i)%d)
-            if (allocated(res%d)) call move_alloc(res%d, me%vals(nin + i)%d)
         end do
+        if (ctx%err%failed) then
+            call me%err%set('error evaluating expression '//int_to_str(i)//' "'//&
+                            me%expressions(i)%str//'": '//ctx%err%message, ctx%err%pos)
+            exit main
+        end if
 
         me%evaluated = .true.
 
     end block main
 
     call me%finish(status, errmsg)
+
+    contains
+
+        logical function use_scalar_program(iexpr)
+        !! if the scalar program can be used for expression `iexpr`:
+        !! all the referenced variables must be scalars.
+        integer, intent(in) :: iexpr
+        integer :: j
+        use_scalar_program = .false.
+        if (.not. me%use_scalar_programs .or. .not. me%progs(iexpr)%ok) return
+        do j = 1, size(me%trees(iexpr)%refs)
+            if (size(me%vals(me%trees(iexpr)%refs(j))%v) /= 1) return
+        end do
+        use_scalar_program = .true.
+        end function use_scalar_program
+
+        logical function same_wrt()
+        !! true if `wrt` is the same as in the previous call, and the
+        !! input variable sizes haven't changed (so the derivative
+        !! setup can be reused)
+        integer :: j
+        same_wrt = .false.
+        if (.not. allocated(me%wrt_names) .or. me%nd == 0) return
+        if (size(me%wrt_names) /= size(wrt)) return
+        do j = 1, size(wrt)
+            if (wrt(j) /= me%wrt_names(j)%str) return
+        end do
+        do j = 1, nin
+            if (.not. allocated(me%vals(j)%d)) return
+            if (size(me%vals(j)%d, 1) /= size(me%vals(j)%v) .or. size(me%vals(j)%d, 2) /= me%nd) return
+        end do
+        same_wrt = .true.
+        end function same_wrt
 
     end subroutine evaluate
 !*****************************************************************************************
@@ -777,7 +879,9 @@
 
     call me%err%clear()
     idx = me%find_output(name)
-    if (.not. me%err%failed) call get_value(me, idx, value)
+    if (.not. me%err%failed) then
+        if (check_value(me, idx)) value = me%vals(idx)%v
+    end if
     call me%finish(status, errmsg)
 
     end subroutine get_vector_by_name
@@ -796,13 +900,11 @@
     character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
 
     integer :: idx
-    real(wp), dimension(:), allocatable :: v
 
     call me%err%clear()
     value = 0.0_wp
     idx = me%find_output(name)
-    if (.not. me%err%failed) call get_value(me, idx, v)
-    if (.not. me%err%failed) call to_scalar(me, v, value)
+    if (.not. me%err%failed) call get_scalar(me, idx, value)
     call me%finish(status, errmsg)
 
     end subroutine get_scalar_by_name
@@ -824,7 +926,7 @@
     if (iexpr < 1 .or. iexpr > me%n_outputs) then
         call me%err%set('invalid expression index '//int_to_str(iexpr))
     else
-        call get_value(me, me%n_inputs + iexpr, value)
+        if (check_value(me, me%n_inputs + iexpr)) value = me%vals(me%n_inputs + iexpr)%v
     end if
     call me%finish(status, errmsg)
 
@@ -843,15 +945,12 @@
     integer, intent(out), optional :: status !! status code (0 if no errors)
     character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
 
-    real(wp), dimension(:), allocatable :: v
-
     call me%err%clear()
     value = 0.0_wp
     if (iexpr < 1 .or. iexpr > me%n_outputs) then
         call me%err%set('invalid expression index '//int_to_str(iexpr))
     else
-        call get_value(me, me%n_inputs + iexpr, v)
-        if (.not. me%err%failed) call to_scalar(me, v, value)
+        call get_scalar(me, me%n_inputs + iexpr, value)
     end if
     call me%finish(status, errmsg)
 
@@ -860,14 +959,15 @@
 
 !*****************************************************************************************
 !>
-!  Get a value by variable index (internal routine).
+!  Check that a variable (by index in the full variable list) has a value.
+!  Raises an error and returns false if not.
 
-    subroutine get_value(me, idx, value)
+    logical function check_value(me, idx) result(ok)
 
     class(fparser), intent(inout) :: me
     integer, intent(in) :: idx !! index in the full variable list
-    real(wp), dimension(:), allocatable, intent(out) :: value
 
+    ok = .false.
     if (idx <= me%n_inputs) then
         if (.not. me%is_set(idx)) then
             call me%err%set('variable "'//me%names(idx)%str//'" has not been set')
@@ -877,45 +977,50 @@
         call me%err%set('the expressions have not been evaluated')
         return
     end if
-    value = me%vals(idx)%v
+    ok = .true.
 
-    end subroutine get_value
+    end function check_value
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
-!  Convert a size-1 array to a scalar, or raise an error.
+!  Get a scalar value by variable index, or raise an error if it isn't a scalar.
 
-    subroutine to_scalar(me, v, value)
-
-    class(fparser), intent(inout) :: me
-    real(wp), dimension(:), intent(in) :: v
-    real(wp), intent(out) :: value
-
-    if (size(v) /= 1) then
-        call me%err%set('value is not a scalar (size is '//int_to_str(size(v))//')')
-        value = 0.0_wp
-    else
-        value = v(1)
-    end if
-
-    end subroutine to_scalar
-!*****************************************************************************************
-
-!*****************************************************************************************
-!>
-!  Get the derivative of a variable with respect to an input variable
-!  (internal routine). Returns a matrix of shape `[size(var), size(wrt)]`.
-
-    subroutine get_deriv(me, idx, wrt, jac)
+    subroutine get_scalar(me, idx, value)
 
     class(fparser), intent(inout) :: me
     integer, intent(in) :: idx !! index in the full variable list
+    real(wp), intent(out) :: value
+
+    value = 0.0_wp
+    if (.not. check_value(me, idx)) return
+    associate (v => me%vals(idx)%v)
+        if (size(v) /= 1) then
+            call me%err%set('value is not a scalar (size is '//int_to_str(size(v))//')')
+        else
+            value = v(1)
+        end if
+    end associate
+
+    end subroutine get_scalar
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Find the derivative columns for an input variable (internal routine).
+!  Returns `n=-1` (and raises an error) if they are not available.
+
+    subroutine find_deriv(me, wrt, off, n)
+
+    class(fparser), intent(inout) :: me
     character(len=*), intent(in) :: wrt !! name of the input variable
-    real(wp), dimension(:,:), allocatable, intent(out) :: jac
+    integer, intent(out) :: off !! column offset of the variable in the derivative matrices
+    integer, intent(out) :: n !! number of columns (size of the variable)
 
-    integer :: iwrt, k, n
+    integer :: iwrt, k
 
+    off = 0
+    n = -1
     if (.not. me%evaluated) then
         call me%err%set('the expressions have not been evaluated')
         return
@@ -927,10 +1032,55 @@
         call me%err%set('derivatives with respect to "'//trim(wrt)//'" were not computed')
         return
     end if
+    off = me%wrt_offset(k)
     n = size(me%vals(iwrt)%v)
-    jac = me%vals(idx)%d(:, me%wrt_offset(k)+1 : me%wrt_offset(k)+n)
+
+    end subroutine find_deriv
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Get the derivative matrix of a variable (by index) with respect to an input variable.
+
+    subroutine get_deriv(me, idx, wrt, jac)
+
+    class(fparser), intent(inout) :: me
+    integer, intent(in) :: idx !! index in the full variable list
+    character(len=*), intent(in) :: wrt !! name of the input variable
+    real(wp), dimension(:,:), allocatable, intent(out) :: jac
+
+    integer :: off, n
+
+    call find_deriv(me, wrt, off, n)
+    if (n >= 0) jac = me%vals(idx)%d(:, off+1:off+n)
 
     end subroutine get_deriv
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Get the scalar derivative of a variable (by index) with respect to a scalar input variable.
+
+    subroutine get_deriv_scalar(me, idx, wrt, deriv)
+
+    class(fparser), intent(inout) :: me
+    integer, intent(in) :: idx !! index in the full variable list
+    character(len=*), intent(in) :: wrt !! name of the input variable
+    real(wp), intent(out) :: deriv
+
+    integer :: off, n
+
+    deriv = 0.0_wp
+    call find_deriv(me, wrt, off, n)
+    if (n < 0) return
+    if (size(me%vals(idx)%v) /= 1 .or. n /= 1) then
+        call me%err%set('derivative is not a scalar (shape is ['//int_to_str(size(me%vals(idx)%v))//&
+                        ','//int_to_str(n)//'])')
+    else
+        deriv = me%vals(idx)%d(1, off+1)
+    end if
+
+    end subroutine get_deriv_scalar
 !*****************************************************************************************
 
 !*****************************************************************************************
@@ -972,14 +1122,12 @@
     integer, intent(out), optional :: status !! status code (0 if no errors)
     character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
 
-    real(wp), dimension(:,:), allocatable :: jac
     integer :: idx
 
     call me%err%clear()
     deriv = 0.0_wp
     idx = me%find_output(name)
-    if (.not. me%err%failed) call get_deriv(me, idx, wrt, jac)
-    if (.not. me%err%failed) call jac_to_scalar(me, jac, deriv)
+    if (.not. me%err%failed) call get_deriv_scalar(me, idx, wrt, deriv)
     call me%finish(status, errmsg)
 
     end subroutine get_derivative_scalar_by_name
@@ -1026,40 +1174,16 @@
     integer, intent(out), optional :: status !! status code (0 if no errors)
     character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
 
-    real(wp), dimension(:,:), allocatable :: jac
-
     call me%err%clear()
     deriv = 0.0_wp
     if (iexpr < 1 .or. iexpr > me%n_outputs) then
         call me%err%set('invalid expression index '//int_to_str(iexpr))
     else
-        call get_deriv(me, me%n_inputs + iexpr, wrt, jac)
-        if (.not. me%err%failed) call jac_to_scalar(me, jac, deriv)
+        call get_deriv_scalar(me, me%n_inputs + iexpr, wrt, deriv)
     end if
     call me%finish(status, errmsg)
 
     end subroutine get_derivative_scalar_by_index
-!*****************************************************************************************
-
-!*****************************************************************************************
-!>
-!  Convert a 1x1 matrix to a scalar, or raise an error.
-
-    subroutine jac_to_scalar(me, jac, deriv)
-
-    class(fparser), intent(inout) :: me
-    real(wp), dimension(:,:), intent(in) :: jac
-    real(wp), intent(out) :: deriv
-
-    if (size(jac, 1) /= 1 .or. size(jac, 2) /= 1) then
-        call me%err%set('derivative is not a scalar (shape is ['//int_to_str(size(jac, 1))//&
-                        ','//int_to_str(size(jac, 2))//'])')
-        deriv = 0.0_wp
-    else
-        deriv = jac(1, 1)
-    end if
-
-    end subroutine jac_to_scalar
 !*****************************************************************************************
 
 !*****************************************************************************************
