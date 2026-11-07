@@ -54,6 +54,7 @@
         integer :: nvar = 0 !! number of variable loads
         integer, dimension(:), allocatable :: var_slot !! slots to load the variables into
         integer, dimension(:), allocatable :: var_index !! the variables to load
+        integer, dimension(:), allocatable :: var_ref !! position of each loaded variable in `expr_tree%refs`
         real(wp), dimension(:), allocatable :: s !! the slots
         real(wp), dimension(:,:), allocatable :: sd !! the derivatives of the slots `[nd, n_slots]`
                                                     !! (only used by [[exec_scalar_d]])
@@ -78,7 +79,7 @@
 
     nmax = 2 * tree%n_nodes + 1 ! upper bound on the number of instructions
     allocate(prog%ins(5, nmax), prog%pos(nmax))
-    allocate(prog%var_slot(tree%n_nodes), prog%var_index(tree%n_nodes))
+    allocate(prog%var_slot(tree%n_nodes), prog%var_index(tree%n_nodes), prog%var_ref(tree%n_nodes))
     allocate(prog%s(tree%n_nodes), source=0.0_wp)
     prog%ok = .true.
     call emit(tree%root)
@@ -88,6 +89,7 @@
         prog%pos = prog%pos(1:prog%n)
         prog%var_slot = prog%var_slot(1:prog%nvar)
         prog%var_index = prog%var_index(1:prog%nvar)
+        prog%var_ref = prog%var_ref(1:prog%nvar)
     end if
 
     contains
@@ -114,6 +116,7 @@
             prog%nvar = prog%nvar + 1
             prog%var_slot(prog%nvar) = inode
             prog%var_index(prog%nvar) = node%op
+            prog%var_ref(prog%nvar) = node%iref
 
         case (node_unary)
             call emit(c1)
@@ -345,11 +348,16 @@
 !  referenced by the program must be scalars (with derivatives `vars(i)%d(1,:)`).
 !  The result is `prog%s(prog%root)` and its gradient is `prog%sd(:,prog%root)`.
 
-    subroutine exec_scalar_d(prog, vars, ctx)
+    subroutine exec_scalar_d(prog, vars, ctx, dref)
 
     type(scalar_program), intent(inout) :: prog !! the program
     type(val_t), dimension(:), intent(in) :: vars !! variable values (all scalars)
     type(eval_ctx), intent(inout) :: ctx !! evaluation context
+    type(val_t), dimension(:), intent(in), optional :: dref !! derivatives of the referenced variables
+                                                            !! (indexed like `expr_tree%refs`). Where `dref(i)%d`
+                                                            !! is allocated, it is used instead of the variable's `d`.
+
+    logical :: use_dref
 
     integer :: k, op, a, b, o, ierr, nd
     real(wp) :: dx, dy
@@ -365,7 +373,13 @@
 
     do k = 1, prog%nvar
         s(prog%var_slot(k)) = vars(prog%var_index(k))%v(1)
-        sd(:, prog%var_slot(k)) = vars(prog%var_index(k))%d(1, :)
+        use_dref = .false.
+        if (present(dref)) use_dref = allocated(dref(prog%var_ref(k))%d)
+        if (use_dref) then
+            sd(:, prog%var_slot(k)) = dref(prog%var_ref(k))%d(1, :)
+        else
+            sd(:, prog%var_slot(k)) = vars(prog%var_index(k))%d(1, :)
+        end if
     end do
 
     k = 1

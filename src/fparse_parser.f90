@@ -68,6 +68,7 @@
         real(wp) :: value = 0.0_wp !! the value (for constants)
         integer, dimension(:), allocatable :: args !! indices of the child nodes
         integer :: pos = 0 !! position in the expression string (for error messages)
+        integer :: iref = 0 !! for variables: the position of the variable in `expr_tree%refs`
     end type node_t
 
     type, public :: expr_tree
@@ -523,6 +524,7 @@
                 if (p%vars(k)%str == name) then
                     n = add_node(p, node_var, k, [integer ::], pos)
                     if (.not. any(p%tree%refs == k)) p%tree%refs = [p%tree%refs, k]
+                    p%tree%nodes(n)%iref = findloc(p%tree%refs, k, dim=1)
                     return
                 end if
             end do

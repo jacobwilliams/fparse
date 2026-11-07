@@ -63,6 +63,31 @@
     public :: wp
     public :: fparse_value, fparse_func, fparse_dfunc
 
+    type :: deriv_layout
+        !! The derivative columns stored for a variable. The columns are grouped in
+        !! blocks, one for each derivative variable (the `wrt` argument of
+        !! [[fparser:evaluate]]) that the variable depends on.
+        integer :: nd = 0 !! number of columns
+        integer, dimension(:), allocatable :: blocks !! indices (into `fparser%wrt`) of the blocks, in increasing order
+        integer, dimension(:), allocatable :: offset !! column offset of each block
+    end type deriv_layout
+
+    type :: int_list
+        integer, dimension(:), allocatable :: i
+    end type int_list
+
+    type :: expr_dsetup
+        !! Derivative setup for one expression: the derivatives of its referenced
+        !! variables, expressed in the expression's own columns.
+        type(val_t), dimension(:), allocatable :: dref !! one per referenced variable (`expr_tree%refs`).
+                                                       !! If `d` is not allocated, the variable's own
+                                                       !! derivative is used directly (same columns).
+        type(int_list), dimension(:), allocatable :: colmap !! for each referenced variable: the
+                                                            !! expression's column for each of its columns
+        logical, dimension(:), allocatable :: gather !! if `dref` must be refilled from an output
+                                                     !! before each evaluation
+    end type expr_dsetup
+
     type, public :: fparser
         !! The function parser class.
         private
@@ -87,6 +112,10 @@
         integer, dimension(:), allocatable :: wrt_offset !! column offsets in the derivative matrices
         logical :: check_domain = .true. !! check for domain errors during evaluation
         logical :: use_scalar_programs = .true. !! use the fast scalar evaluator when possible
+        logical :: use_sparsity = .true. !! only compute the derivatives that can be nonzero
+        logical :: sparse_setup = .false. !! if the current derivative setup used sparsity
+        type(deriv_layout), dimension(:), allocatable :: layout !! derivative columns of each variable
+        type(expr_dsetup), dimension(:), allocatable :: dsetup !! derivative setup of each expression
         integer :: size_version = 0 !! incremented whenever the size of any value changes
         integer, dimension(:), allocatable :: prog_version !! `size_version` when `prog_usable` was computed
         logical, dimension(:), allocatable :: prog_usable !! if each scalar program can currently be used
@@ -115,6 +144,7 @@
         procedure, public :: evaluation_order
         procedure, public :: set_domain_checking
         procedure, public :: set_scalar_optimization
+        procedure, public :: set_sparsity
         procedure, public :: destroy
         procedure :: set_scalar_by_name, set_vector_by_name, set_scalar_by_index, set_vector_by_index
         procedure :: get_scalar_by_name, get_vector_by_name, get_scalar_by_index, get_vector_by_index
@@ -216,6 +246,27 @@
     me%check_domain = check
 
     end subroutine set_domain_checking
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Enable or disable the use of sparsity in the derivative computations
+!  (it is enabled by default).
+!
+!  When enabled, [[fparser:evaluate]] determines (from the expressions) which
+!  derivative variables each output can depend on, directly or through other
+!  outputs, and only computes those derivatives. The others are known to be zero.
+!  This can be much faster when there are many derivative variables and each
+!  output only depends on a few of them. The results are the same either way.
+
+    subroutine set_sparsity(me, use)
+
+    class(fparser), intent(inout) :: me
+    logical, intent(in) :: use
+
+    me%use_sparsity = use
+
+    end subroutine set_sparsity
 !*****************************************************************************************
 
 !*****************************************************************************************
@@ -325,6 +376,9 @@
     if (allocated(me%is_set)) deallocate(me%is_set)
     if (allocated(me%wrt)) deallocate(me%wrt)
     if (allocated(me%wrt_offset)) deallocate(me%wrt_offset)
+    if (allocated(me%wrt_names)) deallocate(me%wrt_names)
+    if (allocated(me%layout)) deallocate(me%layout)
+    if (allocated(me%dsetup)) deallocate(me%dsetup)
     if (.not. allocated(me%funcs)) allocate(me%funcs(0))
 
     nin = size(variables)
@@ -731,7 +785,7 @@
     character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
 
     type(eval_ctx) :: ctx
-    integer :: i, j, k, n, nin, idx, off, nwrt
+    integer :: i, k, nin, idx, off, nwrt, nde
 
     if (me%err%failed) call me%err%clear()
     me%evaluated = .false.
@@ -776,19 +830,7 @@
                     off = off + size(me%vals(idx)%v)
                 end do
                 me%nd = off
-                ! seed the input derivatives:
-                do i = 1, nin
-                    n = size(me%vals(i)%v)
-                    if (allocated(me%vals(i)%d)) deallocate(me%vals(i)%d)
-                    allocate(me%vals(i)%d(n, me%nd), source=0.0_wp)
-                    do k = 1, nwrt
-                        if (me%wrt(k) == i) then
-                            do j = 1, n
-                                me%vals(i)%d(j, me%wrt_offset(k) + j) = 1.0_wp
-                            end do
-                        end if
-                    end do
-                end do
+                call setup_derivatives(me)
                 allocate(me%wrt_names(nwrt))
                 do k = 1, nwrt
                     me%wrt_names(k)%str = trim(wrt(k))
@@ -800,19 +842,25 @@
             me%wrt = [integer ::]
             me%wrt_offset = [integer ::]
             if (allocated(me%wrt_names)) deallocate(me%wrt_names)
+            if (allocated(me%layout)) deallocate(me%layout)
+            if (allocated(me%dsetup)) deallocate(me%dsetup)
             do i = 1, size(me%vals)
                 if (allocated(me%vals(i)%d)) deallocate(me%vals(i)%d)
             end do
         end if
 
         ! evaluate the expressions:
-        ctx%nd = me%nd
         ctx%check_domain = me%check_domain
         do k = 1, me%n_outputs
             i = me%order(k)
+            ! number of derivative columns for this expression:
+            nde = 0
+            if (me%nd > 0) nde = me%layout(nin + i)%nd
+            ctx%nd = nde
+            if (nde > 0) call gather_derivatives(me, i)
             if (use_scalar_program(i)) then
-                if (me%nd > 0) then
-                    call exec_scalar_d(me%progs(i), me%vals, ctx)
+                if (nde > 0) then
+                    call exec_scalar_d(me%progs(i), me%vals, ctx, me%dsetup(i)%dref)
                 else
                     call exec_scalar(me%progs(i), me%vals, ctx)
                 end if
@@ -828,14 +876,18 @@
                     o%v(1) = prog%s(prog%root)
                     if (me%nd > 0) then
                         if (allocated(o%d)) then
-                            if (size(o%d, 1) /= 1 .or. size(o%d, 2) /= me%nd) deallocate(o%d)
+                            if (size(o%d, 1) /= 1 .or. size(o%d, 2) /= nde) deallocate(o%d)
                         end if
-                        if (.not. allocated(o%d)) allocate(o%d(1, me%nd))
-                        o%d(1, :) = prog%sd(:, prog%root)
+                        if (.not. allocated(o%d)) allocate(o%d(1, nde))
+                        if (nde > 0) o%d(1, :) = prog%sd(:, prog%root)
                     end if
                 end associate
             else
-                call eval_tree(me%trees(i), me%vals, me%funcs, ctx)
+                if (nde > 0) then
+                    call eval_tree(me%trees(i), me%vals, me%funcs, ctx, me%dsetup(i)%dref)
+                else
+                    call eval_tree(me%trees(i), me%vals, me%funcs, ctx)
+                end if
                 if (ctx%err%failed) exit
                 associate (r => me%trees(i)%buf(me%trees(i)%root), o => me%vals(nin + i))
                     if (allocated(o%v)) then
@@ -844,7 +896,13 @@
                         me%size_version = me%size_version + 1
                     end if
                     o%v = r%v
-                    if (me%nd > 0) o%d = r%d
+                    if (nde > 0) then
+                        o%d = r%d
+                    else if (me%nd > 0) then
+                        ! derivatives requested, but this output doesn't depend on any of them
+                        if (allocated(o%d)) deallocate(o%d)
+                        allocate(o%d(size(o%v), 0))
+                    end if
                 end associate
             end if
         end do
@@ -894,14 +952,158 @@
         do j = 1, size(wrt)
             if (wrt(j) /= me%wrt_names(j)%str) return
         end do
+        if (me%sparse_setup .neqv. me%use_sparsity) return
+        if (.not. allocated(me%layout)) return
         do j = 1, nin
             if (.not. allocated(me%vals(j)%d)) return
-            if (size(me%vals(j)%d, 1) /= size(me%vals(j)%v) .or. size(me%vals(j)%d, 2) /= me%nd) return
+            if (size(me%vals(j)%d, 1) /= size(me%vals(j)%v) .or. &
+                size(me%vals(j)%d, 2) /= me%layout(j)%nd) return
         end do
         same_wrt = .true.
         end function same_wrt
 
     end subroutine evaluate
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Set up the derivative computations (internal routine). This is called by
+!  [[fparser:evaluate]] when the derivative variables (or the variable sizes) change.
+!
+!  For each variable, this determines which derivative variables (blocks of columns)
+!  it can depend on. With sparsity enabled, an input only depends on itself (if it is
+!  a derivative variable), and an output depends on the union of the variables it
+!  references (directly, or through other outputs). This is a structural analysis: for
+!  `if`, both branches are included. With sparsity disabled, every variable has all
+!  the columns.
+!
+!  Each expression is evaluated using only its own columns. The derivatives of the
+!  variables it references are mapped to those columns (`dsetup`).
+
+    subroutine setup_derivatives(me)
+
+    class(fparser), intent(inout) :: me
+
+    integer :: nin, nout, nw, nvar, i, j, k, e, r, n, off, p, q
+    logical, dimension(:,:), allocatable :: dep !! `dep(k,j)`: variable `j` depends on block `k`
+    integer, dimension(:), allocatable :: bsize !! size of each block
+
+    nin = me%n_inputs
+    nout = me%n_outputs
+    nvar = nin + nout
+    nw = size(me%wrt)
+    me%sparse_setup = me%use_sparsity
+
+    bsize = [(size(me%vals(me%wrt(k))%v), k = 1, nw)]
+
+    ! dependencies:
+    allocate(dep(nw, nvar), source=.not. me%use_sparsity)
+    if (me%use_sparsity) then
+        do k = 1, nw
+            dep(k, me%wrt(k)) = .true.
+        end do
+        do i = 1, nout
+            e = me%order(i)
+            do r = 1, size(me%trees(e)%refs)
+                dep(:, nin + e) = dep(:, nin + e) .or. dep(:, me%trees(e)%refs(r))
+            end do
+        end do
+    end if
+
+    ! column layout of each variable:
+    if (allocated(me%layout)) deallocate(me%layout)
+    allocate(me%layout(nvar))
+    do j = 1, nvar
+        associate (L => me%layout(j))
+            L%blocks = pack([(k, k = 1, nw)], dep(:, j))
+            allocate(L%offset(size(L%blocks)))
+            off = 0
+            do p = 1, size(L%blocks)
+                L%offset(p) = off
+                off = off + bsize(L%blocks(p))
+            end do
+            L%nd = off
+        end associate
+    end do
+
+    ! seed the input derivatives:
+    do i = 1, nin
+        n = size(me%vals(i)%v)
+        if (allocated(me%vals(i)%d)) deallocate(me%vals(i)%d)
+        allocate(me%vals(i)%d(n, me%layout(i)%nd), source=0.0_wp)
+        k = findloc(me%wrt, i, dim=1)
+        if (k > 0) then
+            p = findloc(me%layout(i)%blocks, k, dim=1)
+            do j = 1, n
+                me%vals(i)%d(j, me%layout(i)%offset(p) + j) = 1.0_wp
+            end do
+        end if
+    end do
+
+    ! map the derivatives of the referenced variables to each expression's columns:
+    if (allocated(me%dsetup)) deallocate(me%dsetup)
+    allocate(me%dsetup(nout))
+    do e = 1, nout
+        associate (ds => me%dsetup(e), Le => me%layout(nin + e), refs => me%trees(e)%refs)
+            allocate(ds%dref(size(refs)), ds%colmap(size(refs)))
+            allocate(ds%gather(size(refs)), source=.false.)
+            if (Le%nd == 0) cycle ! no derivatives needed
+            do r = 1, size(refs)
+                j = refs(r)
+                associate (Lj => me%layout(j))
+                    if (size(Lj%blocks) == size(Le%blocks)) then
+                        if (all(Lj%blocks == Le%blocks)) cycle ! same columns: use directly
+                    end if
+                    allocate(ds%colmap(r)%i(Lj%nd))
+                    do p = 1, size(Lj%blocks)
+                        q = findloc(Le%blocks, Lj%blocks(p), dim=1) ! always found (dep is a superset)
+                        do k = 1, bsize(Lj%blocks(p))
+                            ds%colmap(r)%i(Lj%offset(p) + k) = Le%offset(q) + k
+                        end do
+                    end do
+                    if (j <= nin) then
+                        ! inputs: constant, so set it now
+                        allocate(ds%dref(r)%d(size(me%vals(j)%v), Le%nd), source=0.0_wp)
+                        ds%dref(r)%d(:, ds%colmap(r)%i) = me%vals(j)%d
+                    else
+                        ds%gather(r) = .true. ! outputs: set before each evaluation
+                    end if
+                end associate
+            end do
+        end associate
+    end do
+
+    end subroutine setup_derivatives
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Copy the derivatives of the outputs referenced by expression `e` into its
+!  columns (internal routine). See [[setup_derivatives]].
+
+    subroutine gather_derivatives(me, e)
+
+    class(fparser), intent(inout) :: me
+    integer, intent(in) :: e !! expression index
+
+    integer :: r, j, m, nd
+
+    associate (ds => me%dsetup(e))
+        nd = me%layout(me%n_inputs + e)%nd
+        do r = 1, size(ds%gather)
+            if (.not. ds%gather(r)) cycle
+            j = me%trees(e)%refs(r)
+            m = size(me%vals(j)%v)
+            if (allocated(ds%dref(r)%d)) then
+                if (size(ds%dref(r)%d, 1) /= m) deallocate(ds%dref(r)%d)
+            end if
+            ! the columns that aren't mapped are always zero:
+            if (.not. allocated(ds%dref(r)%d)) allocate(ds%dref(r)%d(m, nd), source=0.0_wp)
+            ds%dref(r)%d(:, ds%colmap(r)%i) = me%vals(j)%d
+        end do
+    end associate
+
+    end subroutine gather_derivatives
 !*****************************************************************************************
 
 !*****************************************************************************************
@@ -1051,14 +1253,17 @@
 !  Find the derivative columns for an input variable (internal routine).
 !  Returns `n=-1` (and raises an error) if they are not available.
 
-    subroutine find_deriv(me, wrt, off, n)
+    subroutine find_deriv(me, idx, wrt, off, n)
 
     class(fparser), intent(inout) :: me
+    integer, intent(in) :: idx !! index of the variable in the full variable list
     character(len=*), intent(in) :: wrt !! name of the input variable
-    integer, intent(out) :: off !! column offset of the variable in the derivative matrices
-    integer, intent(out) :: n !! number of columns (size of the variable)
+    integer, intent(out) :: off !! column offset of the derivative in the variable's derivative
+                                !! matrix, or -1 if the derivative is zero (the variable doesn't
+                                !! depend on `wrt`)
+    integer, intent(out) :: n !! number of columns (size of `wrt`)
 
-    integer :: iwrt, k
+    integer :: iwrt, k, p
 
     off = 0
     n = -1
@@ -1073,8 +1278,13 @@
         call me%err%set('derivatives with respect to "'//trim(wrt)//'" were not computed')
         return
     end if
-    off = me%wrt_offset(k)
     n = size(me%vals(iwrt)%v)
+    p = findloc(me%layout(idx)%blocks, k, dim=1)
+    if (p == 0) then
+        off = -1
+    else
+        off = me%layout(idx)%offset(p)
+    end if
 
     end subroutine find_deriv
 !*****************************************************************************************
@@ -1092,8 +1302,13 @@
 
     integer :: off, n
 
-    call find_deriv(me, wrt, off, n)
-    if (n >= 0) jac = me%vals(idx)%d(:, off+1:off+n)
+    call find_deriv(me, idx, wrt, off, n)
+    if (n < 0) return
+    if (off < 0) then
+        allocate(jac(size(me%vals(idx)%v), n), source=0.0_wp)
+    else
+        jac = me%vals(idx)%d(:, off+1:off+n)
+    end if
 
     end subroutine get_deriv
 !*****************************************************************************************
@@ -1112,12 +1327,12 @@
     integer :: off, n
 
     deriv = 0.0_wp
-    call find_deriv(me, wrt, off, n)
+    call find_deriv(me, idx, wrt, off, n)
     if (n < 0) return
     if (size(me%vals(idx)%v) /= 1 .or. n /= 1) then
         call me%err%set('derivative is not a scalar (shape is ['//int_to_str(size(me%vals(idx)%v))//&
                         ','//int_to_str(n)//'])')
-    else
+    else if (off >= 0) then
         deriv = me%vals(idx)%d(1, off+1)
     end if
 

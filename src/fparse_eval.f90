@@ -31,6 +31,8 @@
 
     real(wp), parameter :: pi = acos(-1.0_wp)
 
+    type(val_t), dimension(0) :: no_dref !! used when no `dref` is given
+
     integer, parameter, public :: fn_offset = 100 !! binary operation codes for the two-argument
                                                   !! functions are `fn_offset + fn_*`.
 
@@ -70,14 +72,21 @@
 !>
 !  Evaluate an expression tree. The result is in `tree%buf(tree%root)`.
 
-    subroutine eval_tree(tree, vars, funcs, ctx)
+    subroutine eval_tree(tree, vars, funcs, ctx, dref)
 
     type(expr_tree), intent(inout) :: tree !! the expression tree
     type(val_t), dimension(:), intent(in) :: vars !! variable values (and derivatives if `nd>0`)
     type(user_function), dimension(:), intent(in) :: funcs !! user-defined functions
     type(eval_ctx), intent(inout) :: ctx !! evaluation context
+    type(val_t), dimension(:), intent(in), optional :: dref !! derivatives of the referenced variables
+                                                            !! (indexed like `tree%refs`). Where `dref(i)%d` is
+                                                            !! allocated, it is used instead of the variable's `d`.
 
-    call eval_node(tree, tree%root, vars, funcs, ctx)
+    if (present(dref)) then
+        call eval_node(tree, tree%root, vars, funcs, ctx, dref)
+    else
+        call eval_node(tree, tree%root, vars, funcs, ctx, no_dref)
+    end if
 
     end subroutine eval_tree
 !*****************************************************************************************
@@ -87,15 +96,16 @@
 !  Evaluate a node of an expression tree (recursively).
 !  The result is stored in `tree%buf(inode)`.
 
-    recursive subroutine eval_node(tree, inode, vars, funcs, ctx)
+    recursive subroutine eval_node(tree, inode, vars, funcs, ctx, dref)
 
     type(expr_tree), intent(inout) :: tree !! the expression tree
     integer, intent(in) :: inode !! the node to evaluate
     type(val_t), dimension(:), intent(in) :: vars !! variable values
     type(user_function), dimension(:), intent(in) :: funcs !! user-defined functions
     type(eval_ctx), intent(inout) :: ctx !! evaluation context
+    type(val_t), dimension(:), intent(in) :: dref !! derivatives of the referenced variables (see [[eval_tree]])
 
-    integer :: nd, kind, op, pos, k, c1, c2, i, m, n, nargs
+    integer :: nd, kind, op, pos, k, c1, c2, i, m, n, nargs, ir
 
     nd = ctx%nd
     kind = tree%nodes(inode)%kind
@@ -110,11 +120,20 @@
         if (nd > 0) tree%buf(inode)%d = 0.0_wp
 
     case (node_var)
+        ir = tree%nodes(inode)%iref
+        if (nd > 0 .and. ir <= size(dref)) then
+            if (allocated(dref(ir)%d)) then
+                call ensure(tree%buf(inode), size(vars(op)%v), nd)
+                tree%buf(inode)%v = vars(op)%v
+                tree%buf(inode)%d = dref(ir)%d
+                return
+            end if
+        end if
         call copy_val(vars(op), tree%buf(inode), nd)
 
     case (node_unary)
         c1 = tree%nodes(inode)%args(1)
-        call eval_node(tree, c1, vars, funcs, ctx)
+        call eval_node(tree, c1, vars, funcs, ctx, dref)
         if (ctx%err%failed) return
         associate (a => tree%buf(c1), r => tree%buf(inode))
             call ensure(r, size(a%v), nd)
@@ -130,24 +149,24 @@
     case (node_binary)
         c1 = tree%nodes(inode)%args(1)
         c2 = tree%nodes(inode)%args(2)
-        call eval_node(tree, c1, vars, funcs, ctx)
+        call eval_node(tree, c1, vars, funcs, ctx, dref)
         if (ctx%err%failed) return
-        call eval_node(tree, c2, vars, funcs, ctx)
+        call eval_node(tree, c2, vars, funcs, ctx, dref)
         if (ctx%err%failed) return
         call binary_op(op, tree%buf(c1), tree%buf(c2), ctx, pos, tree%buf(inode))
 
     case (node_builtin)
-        call eval_builtin(tree, inode, vars, funcs, ctx)
+        call eval_builtin(tree, inode, vars, funcs, ctx, dref)
 
     case (node_user)
-        call eval_user(tree, inode, vars, funcs, ctx)
+        call eval_user(tree, inode, vars, funcs, ctx, dref)
 
     case (node_vector)
         nargs = size(tree%nodes(inode)%args)
         n = 0
         do k = 1, nargs
             c1 = tree%nodes(inode)%args(k)
-            call eval_node(tree, c1, vars, funcs, ctx)
+            call eval_node(tree, c1, vars, funcs, ctx, dref)
             if (ctx%err%failed) return
             n = n + size(tree%buf(c1)%v)
         end do
@@ -166,9 +185,9 @@
     case (node_index)
         c1 = tree%nodes(inode)%args(1)
         c2 = tree%nodes(inode)%args(2)
-        call eval_node(tree, c1, vars, funcs, ctx)
+        call eval_node(tree, c1, vars, funcs, ctx, dref)
         if (ctx%err%failed) return
-        call eval_node(tree, c2, vars, funcs, ctx)
+        call eval_node(tree, c2, vars, funcs, ctx, dref)
         if (ctx%err%failed) return
         associate (a => tree%buf(c1), b => tree%buf(c2), r => tree%buf(inode))
             if (size(b%v) /= 1) then
@@ -201,13 +220,14 @@
 !>
 !  Evaluate a built-in function.
 
-    recursive subroutine eval_builtin(tree, inode, vars, funcs, ctx)
+    recursive subroutine eval_builtin(tree, inode, vars, funcs, ctx, dref)
 
     type(expr_tree), intent(inout) :: tree !! the expression tree
     integer, intent(in) :: inode !! the node to evaluate
     type(val_t), dimension(:), intent(in) :: vars !! variable values
     type(user_function), dimension(:), intent(in) :: funcs !! user-defined functions
     type(eval_ctx), intent(inout) :: ctx !! evaluation context
+    type(val_t), dimension(:), intent(in) :: dref !! derivatives of the referenced variables (see [[eval_tree]])
 
     integer :: id, nd, k, i, m, n, pos, nargs, c, c1, c2, c3, na, nb, ia, ib
     real(wp) :: s
@@ -224,7 +244,7 @@
         c1 = tree%nodes(inode)%args(1)
         c2 = tree%nodes(inode)%args(2)
         c3 = tree%nodes(inode)%args(3)
-        call eval_node(tree, c3, vars, funcs, ctx)
+        call eval_node(tree, c3, vars, funcs, ctx, dref)
         if (ctx%err%failed) return
         if (size(tree%buf(c3)%v) == 1) then
             if (tree%buf(c3)%v(1) /= 0.0_wp) then
@@ -232,18 +252,18 @@
             else
                 c = c2
             end if
-            call eval_node(tree, c, vars, funcs, ctx)
+            call eval_node(tree, c, vars, funcs, ctx, dref)
             if (ctx%err%failed) return
             call copy_val(tree%buf(c), tree%buf(inode), nd)
             return
         end if
-        call eval_node(tree, c1, vars, funcs, ctx)
+        call eval_node(tree, c1, vars, funcs, ctx, dref)
         if (ctx%err%failed) return
-        call eval_node(tree, c2, vars, funcs, ctx)
+        call eval_node(tree, c2, vars, funcs, ctx, dref)
         if (ctx%err%failed) return
     else
         do k = 1, nargs
-            call eval_node(tree, tree%nodes(inode)%args(k), vars, funcs, ctx)
+            call eval_node(tree, tree%nodes(inode)%args(k), vars, funcs, ctx, dref)
             if (ctx%err%failed) return
         end do
         c1 = tree%nodes(inode)%args(1)
@@ -821,13 +841,14 @@
 !  Evaluate a user-defined function. If derivatives are requested and the
 !  function does not have a derivative routine, central finite differences are used.
 
-    recursive subroutine eval_user(tree, inode, vars, funcs, ctx)
+    recursive subroutine eval_user(tree, inode, vars, funcs, ctx, dref)
 
     type(expr_tree), intent(inout) :: tree !! the expression tree
     integer, intent(in) :: inode !! the node to evaluate
     type(val_t), dimension(:), intent(in) :: vars !! variable values
     type(user_function), dimension(:), intent(in) :: funcs !! user-defined functions
     type(eval_ctx), intent(inout) :: ctx !! evaluation context
+    type(val_t), dimension(:), intent(in) :: dref !! derivatives of the referenced variables (see [[eval_tree]])
 
     type(fparse_value), dimension(:), allocatable :: uargs
     real(wp), dimension(:), allocatable :: res
@@ -840,7 +861,7 @@
     allocate(uargs(nargs))
     do k = 1, nargs
         c = tree%nodes(inode)%args(k)
-        call eval_node(tree, c, vars, funcs, ctx)
+        call eval_node(tree, c, vars, funcs, ctx, dref)
         if (ctx%err%failed) return
         uargs(k)%v = tree%buf(c)%v
     end do

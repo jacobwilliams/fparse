@@ -15,7 +15,7 @@ A Fortran function parser and evaluator for expressions involving multiple varia
   * vector functions (`dot_product(x,y)`, `cross(x,y)`)
 * **Conditionals:** `if(value_if_true, value_if_false, condition)`, where any nonzero condition counts as true. Conditionals can be nested and work element by element on vectors. With a scalar condition, only the selected branch is evaluated.
 * **User-defined functions** with any number of arguments. You can supply a derivative routine for each one; if you don't, finite differences are used.
-* **Optional first derivatives** with respect to any of the input variables, using forward-mode automatic differentiation. Depending on the sizes involved, a derivative is a scalar, a vector or a matrix (Jacobian). Derivatives are computed only when you ask for them, so they don't slow down normal evaluation.
+* **Optional first derivatives** with respect to any of the input variables, using forward-mode automatic differentiation. Depending on the sizes involved, a derivative is a scalar, a vector or a matrix (Jacobian). Derivatives are computed only when you ask for them, so they don't slow down normal evaluation. Derivatives that the structure of the expressions shows are zero are skipped.
 * **Error checking.**
   * At parse time: syntax errors, undefined variables and functions, wrong argument counts, and invalid or duplicate names.
   * At runtime: division by zero, domain errors, size mismatches, out-of-bounds indexes, and unset variables.
@@ -87,6 +87,8 @@ Evaluation checks for division by zero, domain errors (`sqrt`/`log` of negative 
 
 `p%evaluate(wrt=['x','y'])` also computes the first derivatives of every output (and every intermediate output) with respect to the listed input variables, using forward-mode automatic differentiation. For an output of size `m` and a variable of size `n`, the derivative is an `[m, n]` matrix. Without `wrt`, no derivative work is done. The derivatives of piecewise functions (`abs`, `max`, `if`, ...) are those of the active branch.
 
+By default, fparse uses the structure of the expressions to skip derivatives that are known to be zero. It determines which of the `wrt` variables each output can depend on, directly or through other outputs, and only computes those columns of its Jacobian. For large systems where each equation only uses a few variables, this is much faster. In [test/benchmark_sparsity.f90](test/benchmark_sparsity.f90), with Jacobians with respect to 1000 variables, it is 28x faster for 2000 scalar equations and 49x faster for 100 vector equations (release build). The results are identical. Use `p%set_sparsity(.false.)` to turn it off; run `pixi run benchmark-sparsity` to compare.
+
 #### User-defined functions
 
 ```fortran
@@ -112,6 +114,7 @@ pixi run test      # fpm test
 pixi run example   # run example/example.f90
 pixi run docs      # FORD documentation in ./doc
 pixi run benchmark # run the speed benchmarks and update the table below
+pixi run benchmark-sparsity # compare derivatives with sparsity on and off
 ```
 
 To use fparse in another fpm project:
