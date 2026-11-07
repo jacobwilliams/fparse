@@ -27,10 +27,10 @@
 module fparse_parser
 
 use fparse_common
-use fparse_lexer
 use fparse_functions
+use fparse_lexer
 
-implicit none
+implicit none (type, external)
 
 private
 

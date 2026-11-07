@@ -18,7 +18,7 @@ module fparse_lexer
 
 use fparse_common
 
-implicit none
+implicit none (type, external)
 
 private
 

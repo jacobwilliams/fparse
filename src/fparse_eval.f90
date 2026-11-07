@@ -25,7 +25,7 @@ use fparse_common
 use fparse_functions
 use fparse_parser
 
-implicit none
+implicit none (type, external)
 
 private
 

@@ -6,9 +6,9 @@
 
 module fparse_common
 
-use iso_fortran_env, only: real64
+use, intrinsic :: iso_fortran_env, only: real64
 
-implicit none
+implicit none (type, external)
 
 private
 
@@ -95,8 +95,9 @@ pure function to_lower(str) result(lower)
     lower = str
     do i = 1, len(str)
         ic = iachar(str(i:i))
-        if (ic >= iachar('A') .and. ic <= iachar('Z')) &
+        if (ic >= iachar('A') .and. ic <= iachar('Z')) then
             lower(i:i) = achar(ic + (iachar('a') - iachar('A')))
+        end if
     end do
 
 end function to_lower

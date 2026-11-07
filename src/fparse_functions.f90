@@ -31,7 +31,7 @@ module fparse_functions
 
 use fparse_common
 
-implicit none
+implicit none (type, external)
 
 private
 

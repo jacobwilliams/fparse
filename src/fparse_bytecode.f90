@@ -14,13 +14,13 @@
 module fparse_bytecode
 
 use fparse_common
-use fparse_functions
-use fparse_parser
 use fparse_eval, only: eval_ctx, fn_offset, binary_value, binary_check, has_domain_check, &
                        unary_value, unary_check, domain_message, pow, &
                        binary_partials, unary_derivative
+use fparse_functions
+use fparse_parser
 
-implicit none
+implicit none (type, external)
 
 private
 

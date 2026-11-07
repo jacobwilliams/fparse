@@ -50,13 +50,13 @@
 
 module fparse
 
+use fparse_bytecode
 use fparse_common
+use fparse_eval
 use fparse_functions
 use fparse_parser
-use fparse_eval
-use fparse_bytecode
 
-implicit none
+implicit none (type, external)
 
 private
 
