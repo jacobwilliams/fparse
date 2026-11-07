@@ -105,7 +105,7 @@
     type(error_type), allocatable, intent(out) :: error
     type(fparser) :: p
     real(wp) :: r
-    call p%add_function('Sq', sq, nargs=1)
+    call p%add_function('Sq', sq, is_pure=.true., nargs=1)
     call p%parse(['x'], ['sq(x) + SQ(2)'])
     call check(error, .not. p%failed(), p%error_message()); if (allocated(error)) return
     call p%set_variable('x', 3.0_wp)
@@ -118,8 +118,8 @@
     type(error_type), allocatable, intent(out) :: error
     type(fparser) :: p
     real(wp), dimension(:), allocatable :: v
-    call p%add_function('wsum', wsum, nargs=2)
-    call p%add_function('sq', sq, nargs=1)
+    call p%add_function('wsum', wsum, is_pure=.true., nargs=2)
+    call p%add_function('sq', sq, is_pure=.true., nargs=1)
     call p%parse(['a','b'], ['sq(wsum(a, b))'])
     call p%set_variable('a', [2.0_wp, 1.0_wp])
     call p%set_variable('b', [1.0_wp, 2.0_wp, 3.0_wp])
@@ -133,7 +133,7 @@
     type(error_type), allocatable, intent(out) :: error
     type(fparser) :: p
     real(wp), dimension(:), allocatable :: v
-    call p%add_function('count', count_args)   ! any number of arguments
+    call p%add_function('count', count_args, is_pure=.true.)   ! any number of arguments
     call p%parse(['x'], str_list('count()', 'count(x)', 'count(1, [x, 2], 3)'))
     call check(error, .not. p%failed(), p%error_message()); if (allocated(error)) return
     call p%set_variable('x', 10.0_wp)
@@ -147,7 +147,7 @@
     type(error_type), allocatable, intent(out) :: error
     type(fparser) :: p
     real(wp) :: r
-    call p%add_function('sin', my_sin, nargs=1)
+    call p%add_function('sin', my_sin, is_pure=.true., nargs=1)
     call p%parse(['x'], ['sin(x)'])
     call p%set_variable('x', 3.0_wp)
     call p%evaluate()
@@ -159,7 +159,7 @@
     type(error_type), allocatable, intent(out) :: error
     type(fparser) :: p
     real(wp), dimension(:,:), allocatable :: jac
-    call p%add_function('sq', sq, nargs=1, df=dsq)
+    call p%add_function('sq', sq, is_pure=.true., nargs=1, df=dsq)
     call p%parse(['x','y'], ['f = sq([x, x*y]) * y'])
     call p%set_variables([2.0_wp, 3.0_wp])
     call p%evaluate(wrt=['x','y'])
@@ -178,7 +178,7 @@
     type(error_type), allocatable, intent(out) :: error
     type(fparser) :: p
     real(wp), dimension(:,:), allocatable :: jac
-    call p%add_function('wsum', wsum, nargs=2)
+    call p%add_function('wsum', wsum, is_pure=.true., nargs=2)
     call p%parse(['a','b'], ['f = wsum(a, b)'])
     call p%set_variable('a', [2.0_wp, 1.0_wp])
     call p%set_variable('b', [1.0_wp, 2.0_wp, 3.0_wp])
@@ -201,17 +201,17 @@
     character(len=:), allocatable :: errmsg
 
     ! invalid name
-    call p%add_function('1bad', sq, status=status, errmsg=errmsg)
+    call p%add_function('1bad', sq, is_pure=.true., status=status, errmsg=errmsg)
     call check(error, status /= 0, 'invalid name should fail'); if (allocated(error)) return
 
     ! wrong number of arguments
-    call p%add_function('sq', sq, nargs=1)
+    call p%add_function('sq', sq, is_pure=.true., nargs=1)
     call p%parse(['x'], ['sq(x, x)'], status=status, errmsg=errmsg)
     call check(error, status /= 0, 'wrong number of args should fail'); if (allocated(error)) return
     call check(error, index(errmsg, 'requires 1 argument') > 0, errmsg); if (allocated(error)) return
 
     ! function returns an error code
-    call p%add_function('fails', fails)
+    call p%add_function('fails', fails, is_pure=.true.)
     call p%parse(['x'], ['1 + fails(x)'])
     call p%set_variable('x', 1.0_wp)
     call p%evaluate(status=status, errmsg=errmsg)
@@ -219,14 +219,14 @@
     call check(error, index(errmsg, 'error code 42') > 0, errmsg); if (allocated(error)) return
 
     ! function error at runtime due to bad input size
-    call p%add_function('wsum', wsum, nargs=2)
+    call p%add_function('wsum', wsum, is_pure=.true., nargs=2)
     call p%parse(['x'], ['wsum(x, x)'])
     call p%set_variable('x', 1.0_wp)
     call p%evaluate(status=status, errmsg=errmsg)
     call check(error, status /= 0, 'user function error should propagate'); if (allocated(error)) return
 
     ! derivative with the wrong shape
-    call p%add_function('sq', sq, nargs=1, df=bad_dsq)
+    call p%add_function('sq', sq, is_pure=.true., nargs=1, df=bad_dsq)
     call p%parse(['x'], ['sq(x)'])
     call p%set_variable('x', 1.0_wp)
     call p%evaluate(status=status, errmsg=errmsg)

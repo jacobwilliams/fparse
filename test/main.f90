@@ -16,6 +16,7 @@
     use test_errors, only: collect_errors
     use test_consistency, only: collect_consistency
     use test_sparsity, only: collect_sparsity
+    use test_cache, only: collect_cache
 
     implicit none
 
@@ -35,7 +36,8 @@
         new_testsuite("user_functions", collect_user_functions), &
         new_testsuite("errors", collect_errors), &
         new_testsuite("consistency", collect_consistency), &
-        new_testsuite("sparsity", collect_sparsity) ]
+        new_testsuite("sparsity", collect_sparsity), &
+        new_testsuite("cache", collect_cache) ]
 
     do is = 1, size(testsuites)
         write(error_unit, fmt) "Testing:", testsuites(is)%name

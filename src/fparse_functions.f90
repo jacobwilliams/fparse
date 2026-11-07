@@ -168,6 +168,8 @@
         !! A user-defined function.
         character(len=:), allocatable :: name !! function name (lowercase)
         integer :: nargs = -1 !! number of arguments (-1 for any number)
+        logical :: is_pure = .false. !! if the function is pure: its result only depends on its
+                                     !! arguments (so it can be cached)
         procedure(fparse_func), pointer, nopass :: f => null() !! the function
         procedure(fparse_dfunc), pointer, nopass :: df => null() !! the derivative function (optional).
                                                                  !! If not associated, finite differences are used.

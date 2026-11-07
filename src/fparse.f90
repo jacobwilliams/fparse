@@ -113,6 +113,9 @@
         logical :: check_domain = .true. !! check for domain errors during evaluation
         logical :: use_scalar_programs = .true. !! use the fast scalar evaluator when possible
         logical :: use_sparsity = .true. !! only compute the derivatives that can be nonzero
+        logical :: use_cache = .true. !! reuse the last results if the inputs haven't changed
+        logical :: cache_ok = .true. !! false if the expressions use an impure user function
+                                     !! (so the results can't be cached)
         logical :: sparse_setup = .false. !! if the current derivative setup used sparsity
         type(deriv_layout), dimension(:), allocatable :: layout !! derivative columns of each variable
         type(expr_dsetup), dimension(:), allocatable :: dsetup !! derivative setup of each expression
@@ -145,6 +148,7 @@
         procedure, public :: set_domain_checking
         procedure, public :: set_scalar_optimization
         procedure, public :: set_sparsity
+        procedure, public :: set_caching
         procedure, public :: destroy
         procedure :: set_scalar_by_name, set_vector_by_name, set_scalar_by_index, set_vector_by_index
         procedure :: get_scalar_by_name, get_vector_by_name, get_scalar_by_index, get_vector_by_index
@@ -243,6 +247,7 @@
     class(fparser), intent(inout) :: me
     logical, intent(in) :: check
 
+    if (me%check_domain .neqv. check) me%evaluated = .false.
     me%check_domain = check
 
     end subroutine set_domain_checking
@@ -264,9 +269,39 @@
     class(fparser), intent(inout) :: me
     logical, intent(in) :: use
 
+    if (me%use_sparsity .neqv. use) me%evaluated = .false.
     me%use_sparsity = use
 
     end subroutine set_sparsity
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Enable or disable caching (it is enabled by default).
+!
+!  When enabled, [[fparser:evaluate]] returns immediately, keeping the results
+!  of the previous evaluation, if:
+!
+!  * the previous evaluation was successful,
+!  * none of the input variables have changed since then (the values must be exactly
+!    the same, including the sign of zero; a NaN never compares equal), and
+!  * the same derivatives are requested (the same `wrt` list, or no derivatives).
+!    If no derivatives are requested after an evaluation with derivatives, the
+!    values are reused and the derivatives are discarded.
+!
+!  Setting a variable to the value it already has does not count as a change.
+!  Caching is never used if the expressions use a user-defined function that
+!  was not added as pure (see [[fparser:add_function]]).
+
+    subroutine set_caching(me, use)
+
+    class(fparser), intent(inout) :: me
+    logical, intent(in) :: use
+
+    if (me%use_cache .neqv. use) me%evaluated = .false.
+    me%use_cache = use
+
+    end subroutine set_caching
 !*****************************************************************************************
 
 !*****************************************************************************************
@@ -281,6 +316,7 @@
     class(fparser), intent(inout) :: me
     logical, intent(in) :: use
 
+    if (me%use_scalar_programs .neqv. use) me%evaluated = .false.
     me%use_scalar_programs = use
 
     end subroutine set_scalar_optimization
@@ -295,12 +331,19 @@
 !
 !  If `df` is not given and derivatives are requested, the derivative of
 !  the function is computed using central finite differences.
+!
+!  A function is pure if its result only depends on its arguments (for example,
+!  it doesn't use any saved state, random numbers, or the time). If the expressions
+!  use any function that is not pure, the results are never cached (see
+!  [[fparser:set_caching]]).
 
-    subroutine add_function(me, name, f, nargs, df, status, errmsg)
+    subroutine add_function(me, name, f, is_pure, nargs, df, status, errmsg)
 
     class(fparser), intent(inout) :: me
     character(len=*), intent(in) :: name !! function name (case insensitive)
     procedure(fparse_func) :: f !! the function
+    logical, intent(in) :: is_pure !! if the function (and its derivative) are pure: the
+                                   !! results only depend on the arguments
     integer, intent(in), optional :: nargs !! number of arguments (default is -1, meaning any number)
     procedure(fparse_dfunc), optional :: df !! the derivative of the function
     integer, intent(out), optional :: status !! status code (0 if no errors)
@@ -317,6 +360,7 @@
         call me%err%set('invalid function name "'//trim(name)//'"')
     else
         uf%f => f
+        uf%is_pure = is_pure
         if (present(df)) uf%df => df
         if (present(nargs)) uf%nargs = nargs
         do k = 1, size(me%funcs)
@@ -326,6 +370,9 @@
             end if
         end do
         if (k > size(me%funcs)) me%funcs = [me%funcs, uf]
+        ! a replaced function may be used by the parsed expressions:
+        me%evaluated = .false.
+        call update_cache_ok(me)
     end if
 
     call finish(me, status, errmsg)
@@ -465,6 +512,7 @@
         allocate(me%vals(nin + nout))
         allocate(me%is_set(nin), source=.false.)
         me%parsed = .true.
+        call update_cache_ok(me)
 
     end block main
 
@@ -630,6 +678,7 @@
         call me%err%set('invalid input variable index '//int_to_str(idx))
     else
         if (allocated(me%vals(idx)%v)) then
+            if (identical(me%vals(idx)%v, value)) return ! no change (the last results are still valid)
             if (size(me%vals(idx)%v) /= size(value)) me%size_version = me%size_version + 1
         else
             me%size_version = me%size_version + 1
@@ -640,6 +689,69 @@
     end if
 
     end subroutine set_value
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Returns true if two values are exactly the same: the same size, and the same
+!  elements (including the sign of zero). NaNs are never identical.
+
+    pure logical function identical(a, b)
+
+    real(wp), dimension(:), intent(in) :: a, b
+
+    integer :: i
+
+    identical = .false.
+    if (size(a) /= size(b)) return
+    do i = 1, size(a)
+        if (.not. same_number(a(i), b(i))) return
+    end do
+    identical = .true.
+
+    end function identical
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Returns true if two numbers are exactly the same (including the sign of zero).
+!  NaNs are never the same.
+
+    pure elemental logical function same_number(a, b)
+
+    real(wp), intent(in) :: a, b
+
+    same_number = a == b
+    if (same_number .and. a == 0.0_wp) same_number = sign(1.0_wp, a) == sign(1.0_wp, b)
+
+    end function same_number
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Determine if the results can be cached (internal routine): not if any of the
+!  parsed expressions use a user-defined function that isn't pure.
+
+    subroutine update_cache_ok(me)
+
+    class(fparser), intent(inout) :: me
+
+    integer :: i, k
+
+    me%cache_ok = .true.
+    if (.not. allocated(me%trees)) return
+    do i = 1, size(me%trees)
+        do k = 1, me%trees(i)%n_nodes
+            if (me%trees(i)%nodes(k)%kind == node_user) then
+                if (.not. me%funcs(me%trees(i)%nodes(k)%op)%is_pure) then
+                    me%cache_ok = .false.
+                    return
+                end if
+            end if
+        end do
+    end do
+
+    end subroutine update_cache_ok
 !*****************************************************************************************
 
 !*****************************************************************************************
@@ -750,17 +862,21 @@
             do i = 1, me%n_inputs
                 associate (v => me%vals(i))
                     if (allocated(v%v)) then
-                        if (size(v%v) /= 1) deallocate(v%v)
+                        if (size(v%v) == 1) then
+                            if (same_number(v%v(1), values(i)) .and. me%is_set(i)) cycle ! no change
+                        else
+                            deallocate(v%v)
+                        end if
                     end if
                     if (.not. allocated(v%v)) then
                         allocate(v%v(1))
                         me%size_version = me%size_version + 1
                     end if
                     v%v(1) = values(i)
+                    me%is_set(i) = .true.
+                    me%evaluated = .false.
                 end associate
             end do
-            me%is_set = .true.
-            me%evaluated = .false.
         end if
     end if
     call finish(me, status, errmsg)
@@ -788,8 +904,22 @@
     integer :: i, k, nin, idx, off, nwrt, nde
 
     if (me%err%failed) call me%err%clear()
-    me%evaluated = .false.
     nin = me%n_inputs
+
+    ! if nothing has changed since the last evaluation, use those results:
+    if (me%evaluated .and. me%use_cache .and. me%cache_ok) then
+        nwrt = 0
+        if (present(wrt)) nwrt = size(wrt)
+        if (nwrt == 0) then
+            if (me%nd > 0) call clear_derivatives() ! the values are still valid
+            call finish(me, status, errmsg)
+            return
+        else if (same_wrt()) then
+            call finish(me, status, errmsg)
+            return
+        end if
+    end if
+    me%evaluated = .false.
 
     main: block
 
@@ -837,16 +967,7 @@
                 end do
             end if
         else if (me%nd > 0 .or. .not. allocated(me%wrt)) then
-            ! no derivatives (clear any from a previous evaluation)
-            me%nd = 0
-            me%wrt = [integer ::]
-            me%wrt_offset = [integer ::]
-            if (allocated(me%wrt_names)) deallocate(me%wrt_names)
-            if (allocated(me%layout)) deallocate(me%layout)
-            if (allocated(me%dsetup)) deallocate(me%dsetup)
-            do i = 1, size(me%vals)
-                if (allocated(me%vals(i)%d)) deallocate(me%vals(i)%d)
-            end do
+            call clear_derivatives() ! from a previous evaluation
         end if
 
         ! evaluate the expressions:
@@ -919,6 +1040,20 @@
     call finish(me, status, errmsg)
 
     contains
+
+        subroutine clear_derivatives()
+        !! no derivatives: clear any from a previous evaluation
+        integer :: j
+        me%nd = 0
+        me%wrt = [integer ::]
+        me%wrt_offset = [integer ::]
+        if (allocated(me%wrt_names)) deallocate(me%wrt_names)
+        if (allocated(me%layout)) deallocate(me%layout)
+        if (allocated(me%dsetup)) deallocate(me%dsetup)
+        do j = 1, size(me%vals)
+            if (allocated(me%vals(j)%d)) deallocate(me%vals(j)%d)
+        end do
+        end subroutine clear_derivatives
 
         logical function use_scalar_program(iexpr)
         !! if the scalar program can be used for expression `iexpr`:

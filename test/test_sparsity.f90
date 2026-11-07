@@ -52,7 +52,7 @@
     character(len=:), allocatable :: errmsg
     character(len=:), allocatable :: label
 
-    call p%add_function('fsum', fsum, nargs=2)
+    call p%add_function('fsum', fsum, is_pure=.true., nargs=2)
     if (present(names)) then
         call p%parse(vars, exprs, names=names, status=status, errmsg=errmsg)
     else
