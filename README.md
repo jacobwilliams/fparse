@@ -128,14 +128,14 @@ Time per evaluation (lower is better). In parentheses: time relative to native F
 
 | Case | Native Fortran | fparse | [fortran_function_parser][ffp] | [feq-parse][feq] | [M_calculator][mcalc] |
 |---|---:|---:|---:|---:|---:|
-| Simple expression | 0.5 ns | 27.4 ns (50x) | 12.2 ns (22x) ✅ | 141.4 ns (258x) | 52.82 µs (96339x) ❌ |
-| Trig expression | 4.3 ns | 35.8 ns (8.3x) | 25.4 ns (5.9x) ✅ | 166.5 ns (38x) | 100.46 µs (23210x) ❌ |
-| Polynomial | 0.6 ns | 37.2 ns (59x) | 36.6 ns (58x) ✅ | 1.04 µs (1640x) | 149.22 µs (235927x) ❌ |
-| Complex expression | 9.7 ns | 91.3 ns (9.4x) ✅ | 158.8 ns (16x) | 2.08 µs (214x) **wrong result** | 385.43 µs (39656x) ❌ |
-| 100 equations (time per set) | 227.9 ns | 3.20 µs (14x) ✅ | 4.66 µs (20x) | 86.84 µs (381x) | 9.75 ms (42787x) ❌ |
-| Vector, 1000 points (time per set) | 4.18 µs | 7.91 µs (1.9x) ✅ | 27.10 µs (6.5x) | 15.59 µs (3.7x) | 106.99 ms (25590x) ❌ |
-| Parse complex expression | — | 12.80 µs | 104.16 µs (8.1x) ❌ | 7.74 µs (0.6x) ✅ | — |
-| Trig expression + gradient | 12.5 ns | 209.8 ns (17x) ✅ | — | — | — |
+| Simple expression | 0.6 ns | 26.8 ns (47x) | 12.8 ns (22x) ✅ | 141.1 ns (245x) | 58.86 µs (102173x) ❌ |
+| Trig expression | 4.3 ns | 37.4 ns (8.7x) | 26.4 ns (6.2x) ✅ | 173.8 ns (40x) | 113.18 µs (26352x) ❌ |
+| Polynomial | 0.7 ns | 36.2 ns (55x) ✅ | 38.4 ns (59x) | 1.06 µs (1627x) | 152.78 µs (233998x) ❌ |
+| Complex expression | 9.8 ns | 91.4 ns (9.3x) ✅ | 163.5 ns (17x) | 2.13 µs (218x) | 413.02 µs (42110x) ❌ |
+| 100 equations (time per set) | 225.4 ns | 3.21 µs (14x) ✅ | 4.76 µs (21x) | 87.28 µs (387x) | 10.33 ms (45817x) ❌ |
+| Vector, 1000 points (time per set) | 4.20 µs | 7.68 µs (1.8x) ✅ | 26.67 µs (6.4x) | 13.67 µs (3.3x) | 108.44 ms (25827x) ❌ |
+| Parse complex expression | — | 10.15 µs | 105.76 µs (10x) ❌ | 7.70 µs (0.8x) ✅ | — |
+| Trig expression + gradient | 12.6 ns | 226.6 ns (18x) ✅ | — | — | — |
 
 Expressions (variables `x`, `y`, `z`):
 
@@ -157,11 +157,13 @@ Generated on 2026-11-07 by `pixi run benchmark` ([test/benchmark.f90](test/bench
 Notes:
 
 * fparse compiles each expression to a scalar instruction list, which it uses whenever all the variables are scalars, including when gradients are requested. Otherwise it uses a tree evaluator that handles vectors and Jacobians, and whose buffers are reused between evaluations. For very short expressions, its fixed cost per call (setting variables, evaluating and getting results, with error checking) is the main cost.
-* feq-parse (v2.2.2) gets a wrong result for the complex expression because it evaluates `a - b + c` as `a - (b + c)` (for example, `1 - 2 + 3` gives `-4`).
+* feq-parse is pinned to a commit on its `master` branch, because its latest release (v2.2.2) evaluates `a - b + c` as `a - (b + c)` (for example, `1 - 2 + 3` gives `-4`). That bug is fixed on `master` ([#44](https://github.com/FluidNumerics/feq-parse/issues/44)) but not in a release yet.
 * M_calculator is an interpreter: it processes the expression string on every evaluation, and it has no separate parse step. Variables are passed through its `x(:)` array.
 * Some parsers from the list are left out:
   * [ffp](https://github.com/jacobwilliams/ffp) has an `fpm.toml` but doesn't compile under fpm, because it relies on implicit typing.
   * The others ([fortran_parser](https://github.com/sdm900/fortran_parser), [FortranParser](https://github.com/jacopo-chevallard/FortranParser), [Fortran-Expression-Evaluator](https://github.com/ivomarsoares-personal/Fortran-Expression-Evaluator), [calmat](https://github.com/hassaniriad/calmat)) aren't fpm packages.
+
+
 
 
 
