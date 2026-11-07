@@ -75,14 +75,20 @@ subroutine compile_scalar(tree, prog)
     type(expr_tree), intent(in) :: tree !! the expression tree
     type(scalar_program), intent(out) :: prog !! the compiled program
 
-    integer :: nmax
+    integer :: nmax, k
+    integer, dimension(:), allocatable :: jz_at, jmp_at
 
     nmax = 2 * tree%n_nodes + 1 ! upper bound on the number of instructions
     allocate(prog%ins(5, nmax), prog%pos(nmax))
     allocate(prog%var_slot(tree%n_nodes), prog%var_index(tree%n_nodes), prog%var_ref(tree%n_nodes))
     allocate(prog%s(tree%n_nodes), source=0.0_wp)
+    allocate(jz_at(tree%n_nodes), jmp_at(tree%n_nodes))
     prog%ok = .true.
-    call emit(tree%root)
+    ! follow the evaluation schedule of the tree (no recursion):
+    do k = 1, tree%n_steps
+        call emit(tree%sched(1, k), tree%sched(2, k))
+        if (.not. prog%ok) exit
+    end do
     prog%root = tree%root
     if (prog%ok) then
         prog%ins = prog%ins(:, 1:prog%n)
@@ -94,17 +100,33 @@ subroutine compile_scalar(tree, prog)
 
 contains
 
-    recursive subroutine emit(inode)
-        !! emit the instructions for a node. Its result goes in slot `inode`.
+    subroutine emit(step, inode)
+        !! emit the instructions for a step of the evaluation schedule. The arguments of
+        !! the node have already been emitted, and its result goes in slot `inode`.
+        integer, intent(in) :: step !! the kind of step (`step_*`)
         integer, intent(in) :: inode !! index of the node in the tree
-        integer :: k, c1, c2, c3, id, j1, j2, nargs
+        integer :: k, c1, c2, c3, id, nargs
 
-        if (.not. prog%ok) return
         associate (node => tree%nodes(inode))
             nargs = size(node%args)
             if (nargs > 0) c1 = node%args(1)
             if (nargs > 1) c2 = node%args(2)
             if (nargs > 2) c3 = node%args(3)
+
+            ! the conditional `if(a, b, cond)`:
+            !   [cond]  jz -> L1  [a]  move a  jmp -> L2  L1: [b]  move b  L2:
+            select case (step)
+            case (step_branch) ! after cond
+                call add(ins_jz, c3, 0, 0, node%pos)
+                jz_at(inode) = prog%n
+                return
+            case (step_skip) ! after a
+                call add(ins_move, c1, 0, inode, node%pos)
+                call add(ins_jmp, 0, 0, 0, node%pos)
+                jmp_at(inode) = prog%n
+                prog%ins(4, jz_at(inode)) = prog%n + 1
+                return
+            end select
 
             select case (node%kind)
 
@@ -119,7 +141,6 @@ contains
                 prog%var_ref(prog%nvar) = node%iref
 
             case (node_unary)
-                call emit(c1)
                 if (node%op == op_neg) then
                     call add(ins_neg, c1, 0, inode, node%pos)
                 else
@@ -127,52 +148,30 @@ contains
                 end if
 
             case (node_binary)
-                call emit(c1)
-                call emit(c2)
                 call add(node%op, c1, c2, inode, node%pos)
 
             case (node_builtin)
                 id = node%op
                 select case (id)
-                case (fn_if)
-                    call emit(c3)
-                    call add(ins_jz, c3, 0, 0, node%pos)
-                    j1 = prog%n
-                    call emit(c1)
-                    call add(ins_move, c1, 0, inode, node%pos)
-                    call add(ins_jmp, 0, 0, 0, node%pos)
-                    j2 = prog%n
-                    prog%ins(4, j1) = prog%n + 1
-                    call emit(c2)
+                case (fn_if) ! after b
                     call add(ins_move, c2, 0, inode, node%pos)
-                    prog%ins(4, j2) = prog%n + 1
+                    prog%ins(4, jmp_at(inode)) = prog%n + 1
                 case (fn_max, fn_min)
-                    do k = 1, nargs
-                        call emit(node%args(k))
-                    end do
                     call add(fn_offset + id, c1, c2, inode, node%pos)
                     do k = 3, nargs
                         call add(fn_offset + id, inode, node%args(k), inode, node%pos)
                     end do
                 case (1:fn_last_elemental)
-                    call emit(c1)
                     call add(unary_offset + id, c1, 0, inode, node%pos)
                 case (fn_atan2, fn_mod, fn_modulo, fn_sign, fn_hypot)
-                    call emit(c1)
-                    call emit(c2)
                     call add(fn_offset + id, c1, c2, inode, node%pos)
                 case (fn_sum, fn_product, fn_maxval, fn_minval) ! of a scalar
-                    call emit(c1)
                     call add(ins_move, c1, 0, inode, node%pos)
                 case (fn_norm2)
-                    call emit(c1)
                     call add(unary_offset + fn_abs, c1, 0, inode, node%pos)
                 case (fn_size)
-                    call emit(c1)  ! evaluated for consistency of any errors
-                    prog%s(inode) = 1.0_wp
+                    prog%s(inode) = 1.0_wp  ! (the argument is still evaluated, for any errors)
                 case (fn_dot)
-                    call emit(c1)
-                    call emit(c2)
                     call add(op_mul, c1, c2, inode, node%pos)
                 case default ! e.g., cross
                     prog%ok = .false.
@@ -180,7 +179,6 @@ contains
 
             case (node_vector)
                 if (nargs == 1) then
-                    call emit(c1)
                     call add(ins_move, c1, 0, inode, node%pos)
                 else
                     prog%ok = .false.

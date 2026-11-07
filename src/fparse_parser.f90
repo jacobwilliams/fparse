@@ -79,7 +79,18 @@ type, public :: expr_tree
     integer, dimension(:), allocatable :: refs !! indices of the variables referenced by the expression
     type(val_t), dimension(:), allocatable :: buf !! work buffers: the value of each node
                                                   !! (reused between evaluations to avoid reallocation)
+    integer :: n_steps = 0 !! number of steps in the evaluation schedule
+    integer, dimension(:,:), allocatable :: sched !! the evaluation schedule `[3, n_steps]`: for each
+                                                  !! step, its kind (`step_*`), its node, and a jump
+                                                  !! target (a step index). See [[build_schedule]].
 end type expr_tree
+
+! kinds of the steps of an evaluation schedule:
+integer, parameter, public :: step_eval   = 1 !! evaluate the node (its arguments have been evaluated)
+integer, parameter, public :: step_branch = 2 !! for `if(a, b, cond)`, after `cond`: if it is a scalar
+                                              !! equal to zero, jump to the target (the start of `b`)
+integer, parameter, public :: step_skip   = 3 !! for `if(a, b, cond)`, after `a`: if `cond` is a scalar,
+                                              !! jump to the target (the evaluation of the `if` node)
 
 type :: parser_t
     !! Parser state.
@@ -142,8 +153,91 @@ subroutine parse_expression(str, vars, funcs, tree, err)
     tree%n_nodes = p%tree%n_nodes
     tree%root = root
     allocate(tree%buf(tree%n_nodes))
+    call build_schedule(tree)
 
 end subroutine parse_expression
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Build the evaluation schedule of an expression tree: the order in which its
+!  nodes are evaluated, so that the evaluators can use a simple loop instead of
+!  recursion (which would overflow the stack for very deep trees).
+!
+!  Each node is evaluated after its arguments, in order. For `if(a, b, cond)`, the
+!  steps are: `cond`, a branch step, `a`, a skip step, `b`, and the `if` node, so that
+!  only the selected branch is evaluated when the condition is a scalar.
+
+subroutine build_schedule(tree)
+
+    type(expr_tree), intent(inout) :: tree !! the expression tree
+
+    integer, dimension(:), allocatable :: stack_node, stack_state, branch_step, skip_step
+    integer :: sp, i, st, nargs, child, n
+
+    n = tree%n_nodes
+    ! at most one evaluation step per node, plus two steps for each `if`:
+    allocate(tree%sched(3, 3*n))
+    allocate(stack_node(n), stack_state(n), branch_step(n), skip_step(n))
+    tree%n_steps = 0
+
+    sp = 1
+    stack_node(1) = tree%root
+    stack_state(1) = 0  ! the number of arguments already scheduled
+    do while (sp > 0)
+        i = stack_node(sp)
+        st = stack_state(sp)
+        nargs = size(tree%nodes(i)%args)
+        if (st < nargs) then
+            if (is_if(i)) then
+                ! the order is cond, a, b
+                select case (st)
+                case (0)
+                    child = tree%nodes(i)%args(3)
+                case (1)
+                    call add_step(step_branch, i)
+                    branch_step(i) = tree%n_steps
+                    child = tree%nodes(i)%args(1)
+                case default
+                    call add_step(step_skip, i)
+                    skip_step(i) = tree%n_steps
+                    child = tree%nodes(i)%args(2)
+                end select
+            else
+                child = tree%nodes(i)%args(st + 1)
+            end if
+            stack_state(sp) = st + 1
+            sp = sp + 1
+            stack_node(sp) = child
+            stack_state(sp) = 0
+        else
+            call add_step(step_eval, i)
+            if (is_if(i)) then
+                tree%sched(3, branch_step(i)) = skip_step(i) + 1
+                tree%sched(3, skip_step(i)) = tree%n_steps
+            end if
+            sp = sp - 1
+        end if
+    end do
+    tree%sched = tree%sched(:, 1:tree%n_steps)
+
+contains
+
+    logical function is_if(inode)
+        !! if the node is `if(a, b, cond)`
+        integer, intent(in) :: inode !! the node
+        is_if = tree%nodes(inode)%kind == node_builtin .and. tree%nodes(inode)%op == fn_if
+    end function is_if
+
+    subroutine add_step(kind, inode)
+        !! add a step to the schedule
+        integer, intent(in) :: kind !! the kind of step (`step_*`)
+        integer, intent(in) :: inode !! the node
+        tree%n_steps = tree%n_steps + 1
+        tree%sched(:, tree%n_steps) = [kind, inode, 0]
+    end subroutine add_step
+
+end subroutine build_schedule
 !*****************************************************************************************
 
 !*****************************************************************************************

@@ -54,6 +54,7 @@
         new_unittest("vector_results", test_vector_results), &
         new_unittest("deep_nesting", test_deep_nesting), &
         new_unittest("long_expressions", test_long_expressions), &
+        new_unittest("very_deep_trees", test_very_deep_trees), &
         new_unittest("big_vectors", test_big_vectors), &
         new_unittest("many_variables", test_many_variables), &
         new_unittest("large_systems", test_large_systems), &
@@ -72,37 +73,59 @@
     type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(case_t), dimension(:), intent(in) :: cases !! the expressions and their expected values
     real(wp), intent(in), optional :: tol !! the tolerance
+    integer :: i
+    do i = 1, size(cases)
+        call check_one(error, trim(cases(i)%expr), cases(i)%expected, tol)
+        if (allocated(error)) return
+    end do
+    end subroutine check_cases
+
+    subroutine check_one(error, expr, expected, tol)
+    !! check a scalar expression of `x`, `y`, `z` and `w`, with both evaluators
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
+    character(len=*), intent(in) :: expr !! the expression
+    real(wp), intent(in) :: expected !! the expected value
+    real(wp), intent(in), optional :: tol !! the tolerance
     type(fparser) :: p
-    integer :: i, imode, status
+    integer :: imode, status
     character(len=:), allocatable :: errmsg
     real(wp) :: r
     character(len=30) :: buf1, buf2
     character(len=*), dimension(2), parameter :: mode = ['scalar program', 'tree evaluator']
-    do i = 1, size(cases)
-        call p%parse(['x', 'y', 'z', 'w'], [trim(cases(i)%expr)], status=status, errmsg=errmsg)
+    call p%parse(['x', 'y', 'z', 'w'], [expr], status=status, errmsg=errmsg)
+    if (status /= 0) then
+        call test_failed(error, 'parse failed for "'//short(expr)//'"', short(errmsg))
+        return
+    end if
+    call p%set_variables([xv, yv, zv, wv])
+    do imode = 1, 2
+        call p%set_scalar_optimization(imode == 1)
+        call p%evaluate(status=status, errmsg=errmsg)
         if (status /= 0) then
-            call test_failed(error, 'parse failed for "'//trim(cases(i)%expr)//'"', errmsg)
+            call test_failed(error, 'evaluate failed for "'//short(expr)//'" ('//trim(mode(imode))//')', short(errmsg))
             return
         end if
-        call p%set_variables([xv, yv, zv, wv])
-        do imode = 1, 2
-            call p%set_scalar_optimization(imode == 1)
-            call p%evaluate(status=status, errmsg=errmsg)
-            if (status /= 0) then
-                call test_failed(error, 'evaluate failed for "'//trim(cases(i)%expr)//'" ('//trim(mode(imode))//')', errmsg)
-                return
-            end if
-            call p%get(1, r)
-            if (.not. close_to(r, cases(i)%expected, tol)) then
-                write(buf1, '(ES25.17)') r
-                write(buf2, '(ES25.17)') cases(i)%expected
-                call test_failed(error, 'wrong value for "'//trim(cases(i)%expr)//'" ('//trim(mode(imode))//')', &
-                                 'got '//trim(adjustl(buf1))//', expected '//trim(adjustl(buf2)))
-                return
-            end if
-        end do
+        call p%get(1, r)
+        if (.not. close_to(r, expected, tol)) then
+            write(buf1, '(ES25.17)') r
+            write(buf2, '(ES25.17)') expected
+            call test_failed(error, 'wrong value for "'//short(expr)//'" ('//trim(mode(imode))//')', &
+                             'got '//trim(adjustl(buf1))//', expected '//trim(adjustl(buf2)))
+            return
+        end if
     end do
-    end subroutine check_cases
+    end subroutine check_one
+
+    pure function short(str) result(s)
+    !! a string, shortened for an error message
+    character(len=*), intent(in) :: str !! the string
+    character(len=:), allocatable :: s !! the first 100 characters of the string
+    if (len(str) > 100) then
+        s = str(1:100)//'...'
+    else
+        s = str
+    end if
+    end function short
 
     subroutine check_error_cases(error, cases)
     !! check that a list of expressions of `x`, `y`, `z` and `w` fail to evaluate,
@@ -381,7 +404,13 @@
         case_t('if(sqrt(y), log(-y), y > 0)', log(-yv)), &
         case_t('merge(x, y, z)', xv), &
         case_t('2*if(x, y, 1) + 3', 2*xv + 3), &
-        case_t('if(x^2, y^2, x > y)^0.5', abs(xv)) ], tol=1.0e-14_wp)
+        case_t('if(x^2, y^2, x > y)^0.5', abs(xv)), &
+        ! nested, with errors in the branches that are skipped:
+        case_t('if(if(1/0, 2, 0), 3, if(5, 1/0, x > y))', 2.0_wp), &
+        case_t('if(1/0, if(log(y), 2, 0), if(x, y, z) < 0)', 2.0_wp), &
+        case_t('sum(if(if(1, 1/0, 1), [2, 3], [1, 0]))', 4.0_wp), &
+        case_t('sum(if(if(z, 1/0, w > 0) * [1, 2], 0, [x, y] > 0))', zv), &
+        case_t('if(if(x, y, 0), if(0, 1/0, 1), if(1, 0, 1))', yv) ], tol=1.0e-14_wp)
     end subroutine test_conditionals
 
     subroutine test_vector_to_scalar(error)
@@ -521,6 +550,25 @@
     call check_cases(error, [case_t(e, expected)], tol=1.0e-14_wp)
     end subroutine test_long_expressions
 
+    subroutine test_very_deep_trees(error)
+    !! expressions with very deep trees (a long sum is a left-leaning tree with one level
+    !! per term), which would overflow the stack if they were evaluated recursively
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
+    integer, parameter :: n = 200000
+    ! (the tolerance allows for the rounding errors of the long sums)
+    call check_one(error, repeat('x-', n)//'x', xv - n*xv, tol=1.0e-10_wp)
+    if (allocated(error)) return
+    call check_exact_derivative(error, repeat('x-', n)//'x', 'x', 1.0_wp - n)
+    if (allocated(error)) return
+    call check_one(error, repeat('(z/z)*', n/2)//'z', zv, tol=1.0e-10_wp)
+    if (allocated(error)) return
+    call check_exact_derivative(error, repeat('(z/z)*', n/2)//'z', 'z', 1.0_wp)
+    if (allocated(error)) return
+    call check_one(error, repeat('if(x, 1/0, x > y) + ', n/4)//'0', (n/4)*xv, tol=1.0e-10_wp)
+    if (allocated(error)) return
+    call check_one(error, 'sum('//repeat('[x, y] + ', n/4)//'0)', (n/4)*(xv + yv), tol=1.0e-10_wp)
+    end subroutine test_very_deep_trees
+
     subroutine test_big_vectors(error)
     !! large vector constructors and variables
     type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
@@ -651,7 +699,7 @@
     character(len=30) :: buf1, buf2
     call p%parse(['x', 'y', 'z', 'w'], [expr], status=status, errmsg=errmsg)
     if (status /= 0) then
-        call test_failed(error, 'parse failed for "'//expr//'"', errmsg)
+        call test_failed(error, 'parse failed for "'//short(expr)//'"', short(errmsg))
         return
     end if
     call p%set_variables([xv, yv, zv, wv])
@@ -659,14 +707,14 @@
         call p%set_scalar_optimization(imode == 1)
         call p%evaluate(wrt=[wrt], status=status, errmsg=errmsg)
         if (status /= 0) then
-            call test_failed(error, 'evaluate failed for "'//expr//'"', errmsg)
+            call test_failed(error, 'evaluate failed for "'//short(expr)//'"', short(errmsg))
             return
         end if
         call p%get_derivative(1, wrt, d)
         if (.not. close_to(d, expected, 1.0e-13_wp)) then
             write(buf1, '(ES25.17)') d
             write(buf2, '(ES25.17)') expected
-            call test_failed(error, 'wrong d/d'//wrt//' of "'//expr//'"', &
+            call test_failed(error, 'wrong d/d'//wrt//' of "'//short(expr)//'"', &
                              'got '//trim(adjustl(buf1))//', expected '//trim(adjustl(buf2)))
             return
         end if
