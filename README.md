@@ -124,18 +124,18 @@ fparse = { git = "https://github.com/jacobwilliams/fparse" }
 These benchmarks compare fparse with hand-written Fortran and with the other Fortran function parsers from [this list](https://github.com/sdm900/fortran_parser) that are available as fpm packages. Each parser is a dev-dependency used only by [test/benchmark.f90](test/benchmark.f90), which also checks every result against native Fortran. `pixi run benchmark` builds with the fpm `release` profile and rewrites the table below. Running `fpm test` does a short version of the same run, with very little timing.
 
 <!-- BENCHMARK_START -->
-Time per evaluation (lower is better). In parentheses: time relative to native Fortran (or relative to fparse for the parse benchmark). "—" means not supported, and "wrong result" means the result did not match native Fortran.
+Time per evaluation (lower is better). In parentheses: time relative to native Fortran (or relative to fparse for the parse benchmark). "—" means not supported, and "wrong result" means the result did not match native Fortran. Among the parsers (not native Fortran), ✅ marks the fastest correct result in each row and ❌ the slowest.
 
 | Case | Native Fortran | fparse | [fortran_function_parser][ffp] | [feq-parse][feq] | [M_calculator][mcalc] |
 |---|---:|---:|---:|---:|---:|
-| Simple expression | 0.6 ns | 27.4 ns (49x) | 12.3 ns (22x) | 138.9 ns (250x) | 56.99 µs (102536x) |
-| Trig expression | 4.3 ns | 35.4 ns (8.2x) | 25.3 ns (5.9x) | 172.8 ns (40x) | 106.54 µs (24752x) |
-| Polynomial | 0.6 ns | 35.7 ns (57x) | 36.0 ns (57x) | 1.06 µs (1687x) | 144.64 µs (230421x) |
-| Complex expression | 9.7 ns | 94.9 ns (9.8x) | 158.6 ns (16x) | 2.11 µs (217x) **wrong result** | 394.02 µs (40570x) |
-| 100 equations (time per set) | 207.3 ns | 3.20 µs (15x) | 4.64 µs (22x) | 85.67 µs (413x) | 10.29 ms (49634x) |
-| Vector, 1000 points (time per set) | 4.29 µs | 7.57 µs (1.8x) | 26.94 µs (6.3x) | 10.78 µs (2.5x) | 113.17 ms (26363x) |
-| Parse complex expression | — | 8.96 µs | 105.56 µs (12x) | 5.80 µs (0.6x) | — |
-| Trig expression + gradient | 12.5 ns | 216.4 ns (17x) | — | — | — |
+| Simple expression | 0.5 ns | 27.4 ns (50x) | 12.2 ns (22x) ✅ | 141.4 ns (258x) | 52.82 µs (96339x) ❌ |
+| Trig expression | 4.3 ns | 35.8 ns (8.3x) | 25.4 ns (5.9x) ✅ | 166.5 ns (38x) | 100.46 µs (23210x) ❌ |
+| Polynomial | 0.6 ns | 37.2 ns (59x) | 36.6 ns (58x) ✅ | 1.04 µs (1640x) | 149.22 µs (235927x) ❌ |
+| Complex expression | 9.7 ns | 91.3 ns (9.4x) ✅ | 158.8 ns (16x) | 2.08 µs (214x) **wrong result** | 385.43 µs (39656x) ❌ |
+| 100 equations (time per set) | 227.9 ns | 3.20 µs (14x) ✅ | 4.66 µs (20x) | 86.84 µs (381x) | 9.75 ms (42787x) ❌ |
+| Vector, 1000 points (time per set) | 4.18 µs | 7.91 µs (1.9x) ✅ | 27.10 µs (6.5x) | 15.59 µs (3.7x) | 106.99 ms (25590x) ❌ |
+| Parse complex expression | — | 12.80 µs | 104.16 µs (8.1x) ❌ | 7.74 µs (0.6x) ✅ | — |
+| Trig expression + gradient | 12.5 ns | 209.8 ns (17x) ✅ | — | — | — |
 
 Expressions (variables `x`, `y`, `z`):
 
@@ -162,6 +162,8 @@ Notes:
 * Some parsers from the list are left out:
   * [ffp](https://github.com/jacobwilliams/ffp) has an `fpm.toml` but doesn't compile under fpm, because it relies on implicit typing.
   * The others ([fortran_parser](https://github.com/sdm900/fortran_parser), [FortranParser](https://github.com/jacopo-chevallard/FortranParser), [Fortran-Expression-Evaluator](https://github.com/ivomarsoares-personal/Fortran-Expression-Evaluator), [calmat](https://github.com/hassaniriad/calmat)) aren't fpm packages.
+
+
 
 
 

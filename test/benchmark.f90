@@ -63,6 +63,13 @@
         'Parse complex expression', &
         'Trig expression + gradient' ]
 
+    ! non-ASCII symbols used in the table, as UTF-8 byte sequences
+    ! (so that this source file is pure ASCII):
+    character(len=*), parameter :: sym_check = char(226)//char(156)//char(133) !! U+2705 (white heavy check mark)
+    character(len=*), parameter :: sym_cross = char(226)//char(157)//char(140) !! U+274C (cross mark)
+    character(len=*), parameter :: sym_dash  = char(226)//char(128)//char(148) !! U+2014 (em dash)
+    character(len=*), parameter :: sym_micro = char(194)//char(181)            !! U+00B5 (micro sign)
+
     integer, parameter :: n_many = 100 !! number of equations in the "many" case
     integer, parameter :: n_pts = 1000 !! number of points in the "vector" case
     character(len=1), dimension(3), parameter :: vars = ['x', 'y', 'z']
@@ -595,29 +602,54 @@
     character(len=:), allocatable :: table
 
     character(len=*), parameter :: nl = new_line('a')
-    integer :: impl, ic, iref
+    integer :: impl, ic, iref, ifast, islow, nparsers
     character(len=8) :: date
     character(len=:), allocatable :: cell
 
     call date_and_time(date=date)
 
     table = 'Time per evaluation (lower is better). In parentheses: time relative to native Fortran '//&
-            '(or relative to fparse for the parse benchmark). "—" means not supported, and '//&
-            '"wrong result" means the result did not match native Fortran.'//nl//nl//'| Case |'
+            '(or relative to fparse for the parse benchmark). "'//sym_dash//'" means not supported, and '//&
+            '"wrong result" means the result did not match native Fortran. '//&
+            'Among the parsers (not native Fortran), '//sym_check//' marks the fastest correct result '//&
+            'in each row and '//sym_cross//' the slowest.'//nl//nl//'| Case |'
     do impl = 1, n_impl
         table = table//' '//trim(impl_names(impl))//' |'
     end do
     table = table//nl//'|---|'//repeat('---:|', n_impl)//nl
     do ic = 1, n_cases
         iref = merge(i_fparse, i_native, ic == c_parse)
+        ! fastest (correct) and slowest parser for this case:
+        ifast = 0
+        islow = 0
+        nparsers = 0
+        do impl = 1, n_impl
+            if (impl == i_native .or. t(impl, ic) < 0.0_wp) cycle
+            nparsers = nparsers + 1
+            if (ok(impl, ic)) then
+                if (ifast == 0) then
+                    ifast = impl
+                else if (t(impl, ic) < t(ifast, ic)) then
+                    ifast = impl
+                end if
+            end if
+            if (islow == 0) then
+                islow = impl
+            else if (t(impl, ic) > t(islow, ic)) then
+                islow = impl
+            end if
+        end do
+        if (nparsers < 2) islow = 0 ! nothing to compare with
         table = table//'| '//trim(case_names(ic))//' |'
         do impl = 1, n_impl
             if (t(impl, ic) < 0.0_wp) then
-                cell = '—'
+                cell = sym_dash
             else
                 cell = format_time(t(impl, ic))
                 if (impl /= iref) cell = cell//' ('//format_ratio(t(impl, ic)/t(iref, ic))//')'
                 if (.not. ok(impl, ic)) cell = cell//' **wrong result**'
+                if (impl == ifast) cell = cell//' '//sym_check
+                if (impl == islow) cell = cell//' '//sym_cross
             end if
             table = table//' '//cell//' |'
         end do
@@ -684,7 +716,7 @@
     if (t < 1.0e-6_wp) then
         write(buf, '(F0.1,A)') t*1.0e9_wp, ' ns'
     else if (t < 1.0e-3_wp) then
-        write(buf, '(F0.2,A)') t*1.0e6_wp, ' µs'
+        write(buf, '(F0.2,A)') t*1.0e6_wp, ' '//sym_micro//'s'
     else
         write(buf, '(F0.2,A)') t*1.0e3_wp, ' ms'
     end if
