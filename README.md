@@ -33,7 +33,7 @@ real(wp) :: w, dwdx
 integer :: status
 character(len=:), allocatable :: errmsg
 
-! the order of the expressions doesn't matter; it is determined from the dependencies
+! the order of the expressions does not matter; it is determined from the dependencies
 call p%parse(variables   = ['x', 'y'], &
              expressions = [character(len=20) :: 'z + x', 'sin(x) + 2.0*y'], &
              names       = ['w', 'z'], &
