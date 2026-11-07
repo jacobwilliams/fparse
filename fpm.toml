@@ -19,7 +19,7 @@ implicit-external = false
 source-form = "free"
 
 [dev-dependencies]
-test-drive = { git = "https://github.com/fortran-lang/test-drive", tag = "v0.5.0" }
+test-drive = { git = "https://github.com/fortran-lang/test-drive", tag = "v0.6.1" }
 # other function parsers (used only by the benchmark test):
 fortran_function_parser = { git = "https://github.com/jacobwilliams/fortran_function_parser", tag = "1.1.0" }
 feq-parse = { git = "https://github.com/FluidNumerics/feq-parse", rev = "2e80c5940b128a52c5070a3f56909674fb85a379" }
@@ -45,3 +45,8 @@ sort = "alpha"
 search = true
 front_page_file = "README.md"
 
+[extra.fortitude.check]
+select = ["C", "E", "S"]
+ignore = ["S241", "S102", "S901", "S082", "C142", "S902", "S221", "C121"]
+line-length = 132
+preview = true
