@@ -109,6 +109,7 @@ pixi run build     # fpm build
 pixi run test      # fpm test
 pixi run example   # run example/example.f90
 pixi run docs      # FORD documentation in ./doc
+pixi run benchmark # run the speed benchmarks and update the table below
 ```
 
 To use fparse in another fpm project:
@@ -117,3 +118,49 @@ To use fparse in another fpm project:
 [dependencies]
 fparse = { git = "https://github.com/jacobwilliams/fparse" }
 ```
+
+### Benchmarks
+
+These benchmarks compare fparse with hand-written Fortran and with the other Fortran function parsers from [this list](https://github.com/sdm900/fortran_parser) that are available as fpm packages. Each parser is a dev-dependency used only by [test/benchmark.f90](test/benchmark.f90), which also checks every result against native Fortran. `pixi run benchmark` builds with the fpm `release` profile and rewrites the table below. Running `fpm test` does a short version of the same run, with very little timing.
+
+<!-- BENCHMARK_START -->
+Time per evaluation (lower is better). In parentheses: time relative to native Fortran (or relative to fparse for the parse benchmark). "—" means not supported, and "wrong result" means the result did not match native Fortran.
+
+| Case | Native Fortran | fparse | [fortran_function_parser][ffp] | [feq-parse][feq] | [M_calculator][mcalc] |
+|---|---:|---:|---:|---:|---:|
+| Simple expression | 0.5 ns | 123.6 ns (228x) | 12.3 ns (23x) | 136.4 ns (252x) | 57.96 µs (107147x) |
+| Trig expression | 4.3 ns | 203.1 ns (47x) | 25.2 ns (5.9x) | 168.6 ns (39x) | 106.62 µs (24892x) |
+| Polynomial | 0.6 ns | 367.6 ns (578x) | 35.8 ns (56x) | 1.05 µs (1646x) | 146.05 µs (229681x) |
+| Complex expression | 9.7 ns | 856.4 ns (88x) | 158.0 ns (16x) | 2.08 µs (214x) **wrong result** | 378.72 µs (39125x) |
+| 100 equations (time per set) | 204.2 ns | 26.36 µs (129x) | 4.63 µs (23x) | 85.31 µs (418x) | 10.24 ms (50177x) |
+| Vector, 1000 points (time per set) | 4.13 µs | 6.81 µs (1.6x) | 26.96 µs (6.5x) | 11.39 µs (2.8x) | 106.37 ms (25738x) |
+| Parse complex expression | — | 8.14 µs | 102.87 µs (13x) | 6.38 µs (0.8x) | — |
+| Trig expression + gradient | 12.4 ns | 986.3 ns (79x) | — | — | — |
+
+Expressions (variables `x`, `y`, `z`):
+
+* Simple: `x + y*z`
+* Trig: `sin(x)*cos(y) + exp(-z)`
+* Polynomial: `((((3*x + 2)*x - 5)*x + 1)*x - 7)*y + z`
+* Complex: `sqrt(x^2 + y^2 + z^2)*exp(-x*y/(1 + z^2)) + log(1 + abs(sin(x)*cos(y))) - tan(z/3)^2 + (x - y)/(x + y + 3)`
+* 100 equations: `sin(x + k)*y + z^2/k - x*k` for `k = 1, 2, ..., 100`
+* Vector: the trig expression evaluated at 1000 points (fparse and feq-parse evaluate the whole array at once; the others loop over the points)
+* Gradient: the trig expression and its derivatives with respect to `x`, `y` and `z`
+
+Generated on 2026-11-07 by `pixi run benchmark` ([test/benchmark.f90](test/benchmark.f90)) using GCC version 16.2.0 with options `-mcpu=apple-m1 -mlittle-endian -mabi=lp64 -O3 -funroll-loops -fcoarray=single`.
+
+[ffp]: https://github.com/jacobwilliams/fortran_function_parser
+[feq]: https://github.com/FluidNumerics/feq-parse
+[mcalc]: https://github.com/urbanjost/M_calculator
+<!-- BENCHMARK_END -->
+
+Notes:
+
+* fparse evaluates an expression tree and handles vectors and derivatives. fortran_function_parser compiles each expression to scalar bytecode, so it's faster on scalar expressions but only supports scalars.
+* feq-parse (v2.2.2) gets a wrong result for the complex expression because it evaluates `a - b + c` as `a - (b + c)` (for example, `1 - 2 + 3` gives `-4`).
+* M_calculator is an interpreter: it processes the expression string on every evaluation, and it has no separate parse step. Variables are passed through its `x(:)` array.
+* Some parsers from the list are left out:
+  * [ffp](https://github.com/jacobwilliams/ffp) has an `fpm.toml` but doesn't compile under fpm, because it relies on implicit typing.
+  * The others ([fortran_parser](https://github.com/sdm900/fortran_parser), [FortranParser](https://github.com/jacopo-chevallard/FortranParser), [Fortran-Expression-Evaluator](https://github.com/ivomarsoares-personal/Fortran-Expression-Evaluator), [calmat](https://github.com/hassaniriad/calmat)) aren't fpm packages.
+
+
