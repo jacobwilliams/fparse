@@ -43,3 +43,5 @@ source = true
 graph = true
 sort = "alpha"
 search = true
+front_page_file = "README.md"
+
