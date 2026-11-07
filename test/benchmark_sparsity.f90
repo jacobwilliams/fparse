@@ -33,8 +33,10 @@
 
     subroutine scalar_problem_setup(vars, exprs, names, vals)
         !! `f_i = sin(x_i)*x_(i+1) + exp(-x_(i+2))`, `g_i = f_i*f_(i+1) - x_i` (indices wrap around)
-        character(len=:), dimension(:), allocatable, intent(out) :: vars, exprs, names
-        type(fparse_value), dimension(:), allocatable, intent(out) :: vals
+        character(len=:), dimension(:), allocatable, intent(out) :: vars !! the input variable names
+        character(len=:), dimension(:), allocatable, intent(out) :: exprs !! the expressions
+        character(len=:), dimension(:), allocatable, intent(out) :: names !! the output names
+        type(fparse_value), dimension(:), allocatable, intent(out) :: vals !! the variable values
         integer :: i, n
         n = n_scalar
         allocate(character(len=10) :: vars(n), names(2*n))
@@ -54,8 +56,10 @@
 
     subroutine vector_problem_setup(vars, exprs, names, vals)
         !! `w_i = sin(v_i)*v_(i+1) + sum(v_(i+2))`, `s_i = norm2(w_i) * w_i` (vectors; indices wrap around)
-        character(len=:), dimension(:), allocatable, intent(out) :: vars, exprs, names
-        type(fparse_value), dimension(:), allocatable, intent(out) :: vals
+        character(len=:), dimension(:), allocatable, intent(out) :: vars !! the input variable names
+        character(len=:), dimension(:), allocatable, intent(out) :: exprs !! the expressions
+        character(len=:), dimension(:), allocatable, intent(out) :: names !! the output names
+        type(fparse_value), dimension(:), allocatable, intent(out) :: vals !! the variable values
         integer :: i, j, n
         n = n_vec
         allocate(character(len=10) :: vars(n), names(2*n))
@@ -75,12 +79,14 @@
 
     subroutine run_problem(label, setup)
 
-        character(len=*), intent(in) :: label
+        character(len=*), intent(in) :: label !! the problem name (for the table)
         interface
             subroutine setup(vars, exprs, names, vals)
                 import :: fparse_value
-                character(len=:), dimension(:), allocatable, intent(out) :: vars, exprs, names
-                type(fparse_value), dimension(:), allocatable, intent(out) :: vals
+                character(len=:), dimension(:), allocatable, intent(out) :: vars !! the input variable names
+                character(len=:), dimension(:), allocatable, intent(out) :: exprs !! the expressions
+                character(len=:), dimension(:), allocatable, intent(out) :: names !! the output names
+                type(fparse_value), dimension(:), allocatable, intent(out) :: vals !! the variable values
             end subroutine setup
         end interface
 
@@ -138,8 +144,8 @@
 
     real(wp) function time_evaluate(p, vars) result(t)
         !! time per `evaluate(wrt=vars)` call [sec]
-        type(fparser), intent(inout) :: p
-        character(len=*), dimension(:), intent(in) :: vars
+        type(fparser), intent(inout) :: p !! the parser
+        character(len=*), dimension(:), intent(in) :: vars !! the variables to differentiate with respect to
         integer(int64) :: c1, c2, rate
         integer :: n, j, status
         character(len=:), allocatable :: errmsg
@@ -161,13 +167,14 @@
     end function time_evaluate
 
     pure integer function wrap(i, n)
-        integer, intent(in) :: i, n
+        integer, intent(in) :: i !! the index
+        integer, intent(in) :: n !! the number of elements
         wrap = mod(i - 1, n) + 1
     end function wrap
 
     pure function itoa(i) result(s)
-        integer, intent(in) :: i
-        character(len=:), allocatable :: s
+        integer, intent(in) :: i !! the integer
+        character(len=:), allocatable :: s !! the integer as a string
         character(len=20) :: buf
         write(buf, '(I0)') i
         s = trim(buf)
@@ -175,7 +182,7 @@
 
     function format_time(t) result(s)
         real(wp), intent(in) :: t !! time [sec]
-        character(len=:), allocatable :: s
+        character(len=:), allocatable :: s !! the formatted time
         character(len=20) :: buf
         if (t < 1.0e-3_wp) then
             write(buf, '(F0.1,A)') t*1.0e6_wp, ' us'

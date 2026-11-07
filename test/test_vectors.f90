@@ -20,7 +20,7 @@
     contains
 
     subroutine collect_vectors(testsuite)
-    type(unittest_type), allocatable, intent(out) :: testsuite(:)
+    type(unittest_type), allocatable, intent(out) :: testsuite(:) !! the tests in this suite
     testsuite = [ &
         new_unittest("elementwise", test_elementwise), &
         new_unittest("broadcast", test_broadcast), &
@@ -33,7 +33,7 @@
     end subroutine collect_vectors
 
     subroutine test_elementwise(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_vexpr(error, 'a + b', a + b, ['a','b'], [fparse_value(a), fparse_value(b)]); if (allocated(error)) return
     call check_vexpr(error, 'a * b', a * b, ['a','b'], [fparse_value(a), fparse_value(b)]); if (allocated(error)) return
     call check_vexpr(error, 'a / b', a / b, ['a','b'], [fparse_value(a), fparse_value(b)]); if (allocated(error)) return
@@ -48,7 +48,7 @@
     end subroutine test_elementwise
 
     subroutine test_broadcast(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_vexpr(error, '2 * a', 2*a, ['a'], [fparse_value(a)]); if (allocated(error)) return
     call check_vexpr(error, 'a + s', a + 10, ['a','s'], [fparse_value(a), fparse_value([10.0_wp])]); if (allocated(error)) return
     call check_vexpr(error, 's - a', 10 - a, ['a','s'], [fparse_value(a), fparse_value([10.0_wp])]); if (allocated(error)) return
@@ -59,7 +59,7 @@
     end subroutine test_broadcast
 
     subroutine test_reductions(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_vexpr(error, 'sum(a)', [sum(a)], ['a'], [fparse_value(a)]); if (allocated(error)) return
     call check_vexpr(error, 'product(b)', [product(b)], ['b'], [fparse_value(b)]); if (allocated(error)) return
     call check_vexpr(error, 'norm2(b)', [norm2(b)], ['b'], [fparse_value(b)]); if (allocated(error)) return
@@ -71,7 +71,7 @@
     end subroutine test_reductions
 
     subroutine test_dot_cross(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     real(wp), dimension(3) :: c
     c = [a(2)*b(3) - a(3)*b(2), a(3)*b(1) - a(1)*b(3), a(1)*b(2) - a(2)*b(1)]
     call check_vexpr(error, 'dot_product(a, b)', [dot_product(a, b)], ['a','b'], [fparse_value(a), fparse_value(b)])
@@ -84,7 +84,7 @@
     end subroutine test_dot_cross
 
     subroutine test_constructor(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_vexpr(error, '[1, 2, 3]', [1.0_wp, 2.0_wp, 3.0_wp], ['a'], [fparse_value(a)]); if (allocated(error)) return
     call check_vexpr(error, '[x, 2*x]', [2.0_wp, 4.0_wp], ['x'], [fparse_value([2.0_wp])]); if (allocated(error)) return
     call check_vexpr(error, '[a, 0]', [a, 0.0_wp], ['a'], [fparse_value(a)]); if (allocated(error)) return
@@ -94,7 +94,7 @@
     end subroutine test_constructor
 
     subroutine test_indexing(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_vexpr(error, 'a[1]', [a(1)], ['a'], [fparse_value(a)]); if (allocated(error)) return
     call check_vexpr(error, 'b[3]', [b(3)], ['b'], [fparse_value(b)]); if (allocated(error)) return
     call check_vexpr(error, 'b[1+1]', [b(2)], ['b'], [fparse_value(b)]); if (allocated(error)) return
@@ -106,7 +106,7 @@
     end subroutine test_indexing
 
     subroutine test_vector_functions(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_vexpr(error, 'a / norm2(a)', a / norm2(a), ['a'], [fparse_value(a)]); if (allocated(error)) return
     call check_vexpr(error, 'abs(b)', abs(b), ['b'], [fparse_value(b)]); if (allocated(error)) return
     call check_vexpr(error, 'sqrt(a)', sqrt(a), ['a'], [fparse_value(a)]); if (allocated(error)) return
@@ -115,7 +115,7 @@
 
     subroutine test_get_vector(error)
     !! retrieving vector values, and scalar retrieval errors
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp), dimension(:), allocatable :: v
     real(wp) :: s

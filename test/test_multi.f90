@@ -17,7 +17,7 @@
     contains
 
     subroutine collect_multi(testsuite)
-    type(unittest_type), allocatable, intent(out) :: testsuite(:)
+    type(unittest_type), allocatable, intent(out) :: testsuite(:) !! the tests in this suite
     testsuite = [ &
         new_unittest("readme_example", test_readme_example), &
         new_unittest("names_argument", test_names_argument), &
@@ -30,7 +30,7 @@
 
     subroutine test_readme_example(error)
     !! `[z: 'sin(x) + 2.0*y', w: 'z + x']`
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: z, w
     integer :: status
@@ -49,7 +49,7 @@
     end subroutine test_readme_example
 
     subroutine test_names_argument(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: w
     integer :: status
@@ -66,7 +66,7 @@
 
     subroutine test_ordering(error)
     !! expressions given in reverse dependency order
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: r
     integer :: status
@@ -87,7 +87,7 @@
 
     subroutine test_anonymous(error)
     !! expressions without names, retrieved by index
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: r
     call p%parse(['x'], str_list('x + 1', 'y = 2*x', 'y + 1'))
@@ -101,7 +101,7 @@
     end subroutine test_anonymous
 
     subroutine test_no_inputs(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: r
     call p%parse([character(len=1) ::], str_list('a = 2', 'b = a * pi'))
@@ -112,7 +112,7 @@
     end subroutine test_no_inputs
 
     subroutine test_vector_chain(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp), dimension(:), allocatable :: v
     real(wp) :: r
@@ -130,7 +130,7 @@
 
     subroutine test_assignment_cmp(error)
     !! an assignment whose right-hand side contains comparison operators
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: r
     call p%parse(['x'], str_list('a = x == 1', 'b = x <= 0', 'c= x>=1', 'd =x/=1', 'e = x != 1'))

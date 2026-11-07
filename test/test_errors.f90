@@ -17,7 +17,7 @@
     contains
 
     subroutine collect_errors(testsuite)
-    type(unittest_type), allocatable, intent(out) :: testsuite(:)
+    type(unittest_type), allocatable, intent(out) :: testsuite(:) !! the tests in this suite
     testsuite = [ &
         new_unittest("syntax", test_syntax), &
         new_unittest("names", test_names), &
@@ -31,7 +31,7 @@
     end subroutine collect_errors
 
     subroutine test_syntax(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_parse_error(error, ['sin(x'], ['x'], 'expected ")"'); if (allocated(error)) return
     call check_parse_error(error, ['(x+1'], ['x'], 'expected ")"'); if (allocated(error)) return
     call check_parse_error(error, ['x+1)'], ['x'], 'unexpected ")"'); if (allocated(error)) return
@@ -53,7 +53,7 @@
     end subroutine test_syntax
 
     subroutine test_names(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_parse_error(error, ['y + 1'], ['x'], 'undefined variable "y"'); if (allocated(error)) return
     call check_parse_error(error, ['x'], ['x', 'X'], 'duplicate variable'); if (allocated(error)) return
     call check_parse_error(error, ['x'], ['1x'], 'invalid variable name'); if (allocated(error)) return
@@ -77,9 +77,11 @@
 
     subroutine check_names_error(error, vars, exprs, names, contains)
     !! check that parsing with the `names` argument fails with the expected message
-    type(error_type), allocatable, intent(out) :: error
-    character(len=*), dimension(:), intent(in) :: vars, exprs, names
-    character(len=*), intent(in) :: contains
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
+    character(len=*), dimension(:), intent(in) :: vars !! the input variables
+    character(len=*), dimension(:), intent(in) :: exprs !! the expressions
+    character(len=*), dimension(:), intent(in) :: names !! the output names
+    character(len=*), intent(in) :: contains !! text the error message must contain
     type(fparser) :: p
     integer :: status
     character(len=:), allocatable :: errmsg
@@ -92,7 +94,7 @@
     end subroutine check_names_error
 
     subroutine test_function_errors(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_parse_error(error, ['foo(x)'], ['x'], 'unknown function "foo"'); if (allocated(error)) return
     call check_parse_error(error, ['sin(x, x)'], ['x'], 'requires 1 argument'); if (allocated(error)) return
     call check_parse_error(error, ['sin()'], ['x'], 'requires 1 argument'); if (allocated(error)) return
@@ -103,7 +105,7 @@
     end subroutine test_function_errors
 
     subroutine test_circular(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_parse_error(error, ['a = a + 1'], ['x'], 'circular dependency'); if (allocated(error)) return
     call check_parse_error(error, str_list('a = b', 'b = c', 'c = a + x', 'd = x'), ['x'], &
                            'circular dependency between expressions: a, b, c'); if (allocated(error)) return
@@ -111,7 +113,7 @@
     end subroutine test_circular
 
     subroutine test_domain(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_eval_error(error, '1/x', ['x'], [fparse_value([0.0_wp])], 'division by zero'); if (allocated(error)) return
     call check_eval_error(error, 'sqrt(x)', ['x'], [fparse_value([-1.0_wp])], 'sqrt'); if (allocated(error)) return
     call check_eval_error(error, 'log(x)', ['x'], [fparse_value([0.0_wp])], 'log'); if (allocated(error)) return
@@ -133,7 +135,7 @@
 
     subroutine test_domain_off(error)
     use, intrinsic :: ieee_arithmetic, only: ieee_is_nan, ieee_is_finite
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp), dimension(:), allocatable :: v
     integer :: status
@@ -154,7 +156,7 @@
     end subroutine test_domain_off
 
     subroutine test_sizes(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparse_value), dimension(2) :: v
     v = [fparse_value([1.0_wp, 2.0_wp]), fparse_value([1.0_wp, 2.0_wp, 3.0_wp])]
     call check_eval_error(error, 'a + b', ['a','b'], v, 'incompatible sizes (2 and 3)'); if (allocated(error)) return
@@ -169,7 +171,7 @@
     end subroutine test_sizes
 
     subroutine test_api_misuse(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     integer :: status
     character(len=:), allocatable :: errmsg
@@ -228,7 +230,7 @@
 
     subroutine test_error_position(error)
     !! the error message includes the expression and position
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     integer :: status
     character(len=:), allocatable :: errmsg

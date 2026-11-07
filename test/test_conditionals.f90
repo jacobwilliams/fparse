@@ -17,7 +17,7 @@
     contains
 
     subroutine collect_conditionals(testsuite)
-    type(unittest_type), allocatable, intent(out) :: testsuite(:)
+    type(unittest_type), allocatable, intent(out) :: testsuite(:) !! the tests in this suite
     testsuite = [ &
         new_unittest("scalar_if", test_scalar_if), &
         new_unittest("nested_if", test_nested_if), &
@@ -26,7 +26,7 @@
     end subroutine collect_conditionals
 
     subroutine test_scalar_if(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_expr(error, 'if(10, 20, 1)', 10.0_wp); if (allocated(error)) return
     call check_expr(error, 'if(10, 20, 0)', 20.0_wp); if (allocated(error)) return
     call check_expr(error, 'if(10, 20, -0.5)', 10.0_wp); if (allocated(error)) return   ! nonzero is true
@@ -37,7 +37,7 @@
     end subroutine test_scalar_if
 
     subroutine test_nested_if(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     character(len=*), parameter :: sgn = 'if(1, if(-1, 0, x < 0), x > 0)'
     character(len=*), parameter :: grade = 'if(4, if(3, if(2, 1, x >= 60), x >= 70), x >= 80)'
     call check_expr(error, sgn, 1.0_wp, ['x'], [5.0_wp]); if (allocated(error)) return
@@ -54,7 +54,7 @@
 
     subroutine test_lazy_if(error)
     !! with a scalar condition, only the selected branch is evaluated
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_expr(error, 'if(log(x), 0, x > 0)', 0.0_wp, ['x'], [-1.0_wp]); if (allocated(error)) return
     call check_expr(error, 'if(1/x, 0, x /= 0)', 0.0_wp, ['x'], [0.0_wp]); if (allocated(error)) return
     call check_expr(error, 'if(sqrt(x), sqrt(-x), x >= 0)', 2.0_wp, ['x'], [-4.0_wp]); if (allocated(error)) return
@@ -62,7 +62,7 @@
 
     subroutine test_vector_if(error)
     !! with a vector condition, the selection is element-wise
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     real(wp), dimension(4), parameter :: x = [-2.0_wp, -1.0_wp, 1.0_wp, 2.0_wp]
     call check_vexpr(error, 'if(x, -x, x > 0)', abs(x), ['x'], [fparse_value(x)]); if (allocated(error)) return
     call check_vexpr(error, 'if(x, 0, x > 0)', max(x, 0.0_wp), ['x'], [fparse_value(x)]); if (allocated(error)) return

@@ -162,7 +162,8 @@
 !  If the implementation supports the case.
 
     pure logical function supported(impl, icase)
-    integer, intent(in) :: impl, icase
+    integer, intent(in) :: impl !! the implementation index
+    integer, intent(in) :: icase !! the case index
     select case (icase)
     case (c_parse)
         supported = impl /= i_native .and. impl /= i_mcalc  ! M_calculator has no separate parse step
@@ -179,7 +180,7 @@
 !  The expression for the current case (scalar cases).
 
     function case_expr() result(e)
-    character(len=200) :: e  ! note: a deferred-length result causes an ICE in gfortran 16.2
+    character(len=200) :: e !! the expression (a deferred-length result causes an ICE in gfortran 16.2)
     select case (icase)
     case (c_simple); e = expr_simple
     case (c_trig, c_vector, c_grad); e = expr_trig
@@ -196,7 +197,7 @@
 
     subroutine setup(impl)
 
-    integer, intent(in) :: impl
+    integer, intent(in) :: impl !! the implementation index
 
     integer :: k
 
@@ -241,8 +242,8 @@
 !  become `x(1)`, `x(2)`, `x(3)`.
 
     pure function to_mcalc(str) result(s)
-    character(len=*), intent(in) :: str
-    character(len=:), allocatable :: s
+    character(len=*), intent(in) :: str !! the expression
+    character(len=:), allocatable :: s !! the expression in M_calculator form
     integer :: i, ivar
     logical :: isolated
     s = ''
@@ -262,7 +263,7 @@
     end function to_mcalc
 
     pure logical function is_letter(c)
-    character(len=1), intent(in) :: c
+    character(len=1), intent(in) :: c !! the character
     is_letter = (c >= 'a' .and. c <= 'z') .or. (c >= 'A' .and. c <= 'Z')
     end function is_letter
 !*****************************************************************************************
@@ -272,8 +273,10 @@
 !  Variable values for iteration `i`.
 
     pure subroutine inputs(i, x, y, z)
-    integer, intent(in) :: i
-    real(wp), intent(out) :: x, y, z
+    integer, intent(in) :: i !! the iteration number
+    real(wp), intent(out) :: x !! the value of `x`
+    real(wp), intent(out) :: y !! the value of `y`
+    real(wp), intent(out) :: z !! the value of `z`
     real(wp) :: d
     d = 1.0e-7_wp * mod(i, 1000)
     x = 0.5_wp + d
@@ -289,8 +292,8 @@
 
     real(wp) function time_it(impl, target_time) result(t)
 
-    integer, intent(in) :: impl
-    real(wp), intent(in) :: target_time
+    integer, intent(in) :: impl !! the implementation index
+    real(wp), intent(in) :: target_time !! the minimum total time [sec]
 
     integer :: n
     integer(int64) :: c1, c2, rate
@@ -323,9 +326,9 @@
 
     subroutine run(impl, n, cs)
 
-    integer, intent(in) :: impl
-    integer, intent(in) :: n
-    real(wp), intent(out) :: cs
+    integer, intent(in) :: impl !! the implementation index
+    integer, intent(in) :: n !! the number of iterations
+    real(wp), intent(out) :: cs !! the checksum of the results
 
     select case (impl)
     case (i_native); call run_native(n, cs)
@@ -344,8 +347,8 @@
 
     subroutine run_native(n, cs)
 
-    integer, intent(in) :: n
-    real(wp), intent(out) :: cs
+    integer, intent(in) :: n !! the number of iterations
+    real(wp), intent(out) :: cs !! the checksum of the results
 
     integer :: i, k
     real(wp) :: x, y, z, d
@@ -403,8 +406,8 @@
 
     subroutine run_fparse(n, cs)
 
-    integer, intent(in) :: n
-    real(wp), intent(out) :: cs
+    integer, intent(in) :: n !! the number of iterations
+    real(wp), intent(out) :: cs !! the checksum of the results
 
     integer :: i, k
     real(wp) :: x, y, z, r, d, dx, dy, dz
@@ -467,8 +470,8 @@
 
     subroutine run_ffp(n, cs)
 
-    integer, intent(in) :: n
-    real(wp), intent(out) :: cs
+    integer, intent(in) :: n !! the number of iterations
+    real(wp), intent(out) :: cs !! the checksum of the results
 
     integer :: i, k
     real(wp) :: x, y, z, r, d
@@ -511,8 +514,8 @@
 
     subroutine run_feq(n, cs)
 
-    integer, intent(in) :: n
-    real(wp), intent(out) :: cs
+    integer, intent(in) :: n !! the number of iterations
+    real(wp), intent(out) :: cs !! the checksum of the results
 
     integer :: i, k
     real(wp) :: x, y, z, d
@@ -556,8 +559,8 @@
 
     subroutine run_mcalc(n, cs)
 
-    integer, intent(in) :: n
-    real(wp), intent(out) :: cs
+    integer, intent(in) :: n !! the number of iterations
+    real(wp), intent(out) :: cs !! the checksum of the results
 
     integer :: i, k
     real(wp) :: x, y, z, d
@@ -597,9 +600,9 @@
 
     function make_table(t, ok) result(table)
 
-    real(wp), dimension(n_impl, n_cases), intent(in) :: t
-    logical, dimension(n_impl, n_cases), intent(in) :: ok
-    character(len=:), allocatable :: table
+    real(wp), dimension(n_impl, n_cases), intent(in) :: t !! the times [sec] for each implementation and case
+    logical, dimension(n_impl, n_cases), intent(in) :: ok !! if each implementation was run for each case
+    character(len=:), allocatable :: table !! the markdown table
 
     character(len=*), parameter :: nl = new_line('a')
     integer :: impl, ic, iref, ifast, islow, nparsers
@@ -681,7 +684,7 @@
 
     function optimization_options() result(opts)
 
-    character(len=:), allocatable :: opts
+    character(len=:), allocatable :: opts !! the compiler options
 
     character(len=:), allocatable :: all_opts, tok
     integer :: i, j
@@ -711,7 +714,7 @@
 
     function format_time(t) result(s)
     real(wp), intent(in) :: t !! time [sec]
-    character(len=:), allocatable :: s
+    character(len=:), allocatable :: s !! the formatted time
     character(len=20) :: buf
     if (t < 1.0e-6_wp) then
         write(buf, '(F0.1,A)') t*1.0e9_wp, ' ns'
@@ -730,8 +733,8 @@
 !  Format a time ratio.
 
     function format_ratio(r) result(s)
-    real(wp), intent(in) :: r
-    character(len=:), allocatable :: s
+    real(wp), intent(in) :: r !! the time ratio
+    character(len=:), allocatable :: s !! the formatted ratio
     character(len=20) :: buf
     if (r < 10.0_wp) then
         write(buf, '(F0.1,A)') r, 'x'
@@ -748,8 +751,8 @@
 !  Integer to string.
 
     pure function itoa(i) result(s)
-    integer, intent(in) :: i
-    character(len=:), allocatable :: s
+    integer, intent(in) :: i !! the integer
+    character(len=:), allocatable :: s !! the integer as a string
     character(len=20) :: buf
     write(buf, '(I0)') i
     s = trim(buf)
@@ -762,7 +765,7 @@
 
     subroutine write_readme(table)
 
-    character(len=*), intent(in) :: table
+    character(len=*), intent(in) :: table !! the markdown table
 
     character(len=*), parameter :: filename = 'README.md'
     character(len=*), parameter :: start_marker = '<!-- BENCHMARK_START -->'
@@ -802,9 +805,9 @@
 !  Read a line of any length from a file.
 
     subroutine read_line(iunit, line, istat)
-    integer, intent(in) :: iunit
-    character(len=:), allocatable, intent(out) :: line
-    integer, intent(out) :: istat
+    integer, intent(in) :: iunit !! the file unit
+    character(len=:), allocatable, intent(out) :: line !! the line (without the newline)
+    integer, intent(out) :: istat !! the I/O status code
     character(len=256) :: buf
     integer :: isize
     line = ''

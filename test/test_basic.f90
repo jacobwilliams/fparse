@@ -17,7 +17,7 @@
     contains
 
     subroutine collect_basic(testsuite)
-    type(unittest_type), allocatable, intent(out) :: testsuite(:)
+    type(unittest_type), allocatable, intent(out) :: testsuite(:) !! the tests in this suite
     testsuite = [ &
         new_unittest("numbers", test_numbers), &
         new_unittest("arithmetic", test_arithmetic), &
@@ -31,7 +31,7 @@
     end subroutine collect_basic
 
     subroutine test_numbers(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_expr(error, '42', 42.0_wp); if (allocated(error)) return
     call check_expr(error, '3.25', 3.25_wp); if (allocated(error)) return
     call check_expr(error, '.5', 0.5_wp); if (allocated(error)) return
@@ -47,7 +47,7 @@
     end subroutine test_numbers
 
     subroutine test_arithmetic(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_expr(error, '1+2', 3.0_wp); if (allocated(error)) return
     call check_expr(error, '5-8', -3.0_wp); if (allocated(error)) return
     call check_expr(error, '3*4', 12.0_wp); if (allocated(error)) return
@@ -65,7 +65,7 @@
     end subroutine test_arithmetic
 
     subroutine test_precedence(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_expr(error, '1+2*3', 7.0_wp); if (allocated(error)) return
     call check_expr(error, '(1+2)*3', 9.0_wp); if (allocated(error)) return
     call check_expr(error, '10-4-3', 3.0_wp); if (allocated(error)) return
@@ -83,7 +83,7 @@
     end subroutine test_precedence
 
     subroutine test_relational(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_expr(error, '1 == 1', 1.0_wp); if (allocated(error)) return
     call check_expr(error, '1 == 2', 0.0_wp); if (allocated(error)) return
     call check_expr(error, '1 /= 2', 1.0_wp); if (allocated(error)) return
@@ -101,7 +101,7 @@
     end subroutine test_relational
 
     subroutine test_logical(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_expr(error, '1 && 1', 1.0_wp); if (allocated(error)) return
     call check_expr(error, '1 && 0', 0.0_wp); if (allocated(error)) return
     call check_expr(error, '0 || 0', 0.0_wp); if (allocated(error)) return
@@ -116,7 +116,7 @@
     end subroutine test_logical
 
     subroutine test_case(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_expr(error, 'X + x', 4.0_wp, ['x'], [2.0_wp]); if (allocated(error)) return
     call check_expr(error, 'SIN(x) + Cos(X)', sin(2.0_wp) + cos(2.0_wp), ['X'], [2.0_wp]); if (allocated(error)) return
     call check_expr(error, 'Alpha_1 * 2', 6.0_wp, ['ALPHA_1'], [3.0_wp]); if (allocated(error)) return
@@ -124,14 +124,14 @@
     end subroutine test_case
 
     subroutine test_whitespace(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_expr(error, '   1   +   2   ', 3.0_wp); if (allocated(error)) return
     call check_expr(error, 'sin ( x )', sin(1.0_wp), ['x'], [1.0_wp]); if (allocated(error)) return
     call check_expr(error, achar(9)//'2'//achar(9)//'*3', 6.0_wp); if (allocated(error)) return
     end subroutine test_whitespace
 
     subroutine test_constants(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_expr(error, 'pi', acos(-1.0_wp)); if (allocated(error)) return
     call check_expr(error, 'cos(pi)', -1.0_wp); if (allocated(error)) return
     ! a variable named pi takes precedence
@@ -140,7 +140,7 @@
 
     subroutine test_reuse(error)
     !! the same parser can be evaluated repeatedly, and re-parsed
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: r
     integer :: i

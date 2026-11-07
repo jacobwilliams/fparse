@@ -33,7 +33,7 @@
     contains
 
     subroutine collect_consistency(testsuite)
-    type(unittest_type), allocatable, intent(out) :: testsuite(:)
+    type(unittest_type), allocatable, intent(out) :: testsuite(:) !! the tests in this suite
     testsuite = [ &
         new_unittest("values", test_values), &
         new_unittest("errors", test_errors_both), &
@@ -43,13 +43,16 @@
 
     subroutine eval_both(error, expr, vals, wrt, r1, r2, msg1, msg2, d1, d2)
     !! evaluate an expression with both evaluators
-    type(error_type), allocatable, intent(out) :: error
-    character(len=*), intent(in) :: expr
-    real(wp), dimension(3), intent(in) :: vals
-    logical, intent(in) :: wrt
-    real(wp), intent(out) :: r1, r2
-    character(len=:), allocatable, intent(out) :: msg1, msg2
-    real(wp), dimension(3), intent(out) :: d1, d2
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
+    character(len=*), intent(in) :: expr !! the expression (of `x`, `y` and `z`)
+    real(wp), dimension(3), intent(in) :: vals !! the values of `x`, `y` and `z`
+    logical, intent(in) :: wrt !! if the derivatives are also computed
+    real(wp), intent(out) :: r1 !! the result with the scalar program
+    real(wp), intent(out) :: r2 !! the result with the tree evaluator
+    character(len=:), allocatable, intent(out) :: msg1 !! the error message with the scalar program
+    character(len=:), allocatable, intent(out) :: msg2 !! the error message with the tree evaluator
+    real(wp), dimension(3), intent(out) :: d1 !! the gradient with the scalar program
+    real(wp), dimension(3), intent(out) :: d2 !! the gradient with the tree evaluator
     type(fparser) :: p
     integer :: i, status
     character(len=1), dimension(3), parameter :: vars = ['x', 'y', 'z']
@@ -79,7 +82,7 @@
     end do
     contains
         subroutine get_grad(d)
-        real(wp), dimension(3), intent(out) :: d
+        real(wp), dimension(3), intent(out) :: d !! the gradient with respect to `x`, `y` and `z`
         integer :: k
         do k = 1, 3
             call p%get_derivative(1, vars(k), d(k))
@@ -88,7 +91,7 @@
     end subroutine eval_both
 
     subroutine test_values(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     integer :: i
     real(wp) :: r1, r2
     real(wp), dimension(3) :: d1, d2
@@ -109,7 +112,7 @@
 
     subroutine test_errors_both(error)
     !! domain errors give the same message with both evaluators
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     character(len=*), dimension(*), parameter :: bad = [character(len=40) :: &
         '1/(x-x)', 'sqrt(-x)', 'log(x-x)', 'log10(-y)', 'asin(y)', 'acos(-y)', 'acosh(x)', &
         'atanh(y)', '(-x)^0.5', '(x-x)^-1', 'mod(y, x-x)', 'modulo(y, x-x)', 'atan2(x-x, x-x)', &
@@ -129,7 +132,7 @@
     end subroutine test_errors_both
 
     subroutine test_derivs_both(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     integer :: i
     real(wp) :: r1, r2
     real(wp), dimension(3) :: d1, d2
@@ -151,7 +154,7 @@
     subroutine test_mixed_sizes(error)
     !! a scalar expression depending on a vector output uses the general evaluator,
     !! and switching variables between scalar and vector works
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: r
     real(wp), dimension(:), allocatable :: v

@@ -14,60 +14,60 @@
 !  * logical operators: `&&`, `||`, `!` and the Fortran forms `.and.`, `.or.`, `.not.`
 !  * punctuation: `(`, `)`, `[`, `]`, `,`
 
-    module fparse_lexer
+module fparse_lexer
 
-    use fparse_common
+use fparse_common
 
-    implicit none
+implicit none
 
-    private
+private
 
-    ! token kinds:
-    integer, parameter, public :: tok_end    = 0  !! end of the expression
-    integer, parameter, public :: tok_number = 1  !! a numeric literal
-    integer, parameter, public :: tok_ident  = 2  !! an identifier
-    integer, parameter, public :: tok_plus   = 3  !! `+`
-    integer, parameter, public :: tok_minus  = 4  !! `-`
-    integer, parameter, public :: tok_mul    = 5  !! `*`
-    integer, parameter, public :: tok_div    = 6  !! `/`
-    integer, parameter, public :: tok_pow    = 7  !! `^` or `**`
-    integer, parameter, public :: tok_lparen = 8  !! `(`
-    integer, parameter, public :: tok_rparen = 9  !! `)`
-    integer, parameter, public :: tok_lbrack = 10 !! `[`
-    integer, parameter, public :: tok_rbrack = 11 !! `]`
-    integer, parameter, public :: tok_comma  = 12 !! `,`
-    integer, parameter, public :: tok_eq     = 13 !! `==` or `.eq.`
-    integer, parameter, public :: tok_ne     = 14 !! `/=`, `!=` or `.ne.`
-    integer, parameter, public :: tok_lt     = 15 !! `<` or `.lt.`
-    integer, parameter, public :: tok_le     = 16 !! `<=` or `.le.`
-    integer, parameter, public :: tok_gt     = 17 !! `>` or `.gt.`
-    integer, parameter, public :: tok_ge     = 18 !! `>=` or `.ge.`
-    integer, parameter, public :: tok_and    = 19 !! `&&` or `.and.`
-    integer, parameter, public :: tok_or     = 20 !! `||` or `.or.`
-    integer, parameter, public :: tok_not    = 21 !! `!` or `.not.`
+! token kinds:
+integer, parameter, public :: tok_end    = 0  !! end of the expression
+integer, parameter, public :: tok_number = 1  !! a numeric literal
+integer, parameter, public :: tok_ident  = 2  !! an identifier
+integer, parameter, public :: tok_plus   = 3  !! `+`
+integer, parameter, public :: tok_minus  = 4  !! `-`
+integer, parameter, public :: tok_mul    = 5  !! `*`
+integer, parameter, public :: tok_div    = 6  !! `/`
+integer, parameter, public :: tok_pow    = 7  !! `^` or `**`
+integer, parameter, public :: tok_lparen = 8  !! `(`
+integer, parameter, public :: tok_rparen = 9  !! `)`
+integer, parameter, public :: tok_lbrack = 10 !! `[`
+integer, parameter, public :: tok_rbrack = 11 !! `]`
+integer, parameter, public :: tok_comma  = 12 !! `,`
+integer, parameter, public :: tok_eq     = 13 !! `==` or `.eq.`
+integer, parameter, public :: tok_ne     = 14 !! `/=`, `!=` or `.ne.`
+integer, parameter, public :: tok_lt     = 15 !! `<` or `.lt.`
+integer, parameter, public :: tok_le     = 16 !! `<=` or `.le.`
+integer, parameter, public :: tok_gt     = 17 !! `>` or `.gt.`
+integer, parameter, public :: tok_ge     = 18 !! `>=` or `.ge.`
+integer, parameter, public :: tok_and    = 19 !! `&&` or `.and.`
+integer, parameter, public :: tok_or     = 20 !! `||` or `.or.`
+integer, parameter, public :: tok_not    = 21 !! `!` or `.not.`
 
-    type, public :: token_t
-        !! A token from an expression string.
-        integer :: kind = tok_end !! the token kind (`tok_*` parameters)
-        character(len=:), allocatable :: text !! the token text (lowercase for identifiers)
-        real(wp) :: value = 0.0_wp !! the value (for numbers)
-        integer :: pos = 0 !! position of the start of the token in the string
-    end type token_t
+type, public :: token_t
+    !! A token from an expression string.
+    integer :: kind = tok_end !! the token kind (`tok_*` parameters)
+    character(len=:), allocatable :: text !! the token text (lowercase for identifiers)
+    real(wp) :: value = 0.0_wp !! the value (for numbers)
+    integer :: pos = 0 !! position of the start of the token in the string
+end type token_t
 
-    type :: dot_op_t
-        !! a Fortran-style dot operator
-        character(len=5) :: text
-        integer :: kind
-    end type dot_op_t
+type :: dot_op_t
+    !! a Fortran-style dot operator
+    character(len=5) :: text
+    integer :: kind
+end type dot_op_t
 
-    type(dot_op_t), dimension(*), parameter :: dot_ops = [ &
-        dot_op_t('.and.', tok_and), dot_op_t('.or. ', tok_or), dot_op_t('.not.', tok_not), &
-        dot_op_t('.eq. ', tok_eq),  dot_op_t('.ne. ', tok_ne), dot_op_t('.lt. ', tok_lt),  &
-        dot_op_t('.le. ', tok_le),  dot_op_t('.gt. ', tok_gt), dot_op_t('.ge. ', tok_ge) ]
+type(dot_op_t), dimension(*), parameter :: dot_ops = [ &
+    dot_op_t('.and.', tok_and), dot_op_t('.or. ', tok_or), dot_op_t('.not.', tok_not), &
+    dot_op_t('.eq. ', tok_eq),  dot_op_t('.ne. ', tok_ne), dot_op_t('.lt. ', tok_lt),  &
+    dot_op_t('.le. ', tok_le),  dot_op_t('.gt. ', tok_gt), dot_op_t('.ge. ', tok_ge) ]
 
-    public :: tokenize
+public :: tokenize
 
-    contains
+contains
 !*****************************************************************************************
 
 !*****************************************************************************************
@@ -75,7 +75,7 @@
 !  Convert an expression string into an array of tokens.
 !  The last token is always of kind `tok_end`.
 
-    subroutine tokenize(str, tokens, err)
+subroutine tokenize(str, tokens, err)
 
     character(len=*), intent(in) :: str !! the expression string
     type(token_t), dimension(:), allocatable, intent(out) :: tokens !! the tokens
@@ -208,7 +208,7 @@
     tokens(ntok)%text = ''
     tokens = tokens(1:ntok)
 
-    end subroutine tokenize
+end subroutine tokenize
 !*****************************************************************************************
 
 !*****************************************************************************************
@@ -216,9 +216,9 @@
 !  Lex a numeric literal starting at position `i`.
 !  On output, `j` is the position of the last character of the number.
 
-    subroutine lex_number(str, i, j, val, ok)
+subroutine lex_number(str, i, j, val, ok)
 
-    character(len=*), intent(in) :: str
+    character(len=*), intent(in) :: str !! the expression string
     integer, intent(in) :: i !! start position
     integer, intent(out) :: j !! end position
     real(wp), intent(out) :: val !! the numeric value
@@ -262,16 +262,16 @@
     read(numstr, *, iostat=ios) val
     ok = ios == 0
 
-    contains
+contains
 
-        subroutine skip_digits()
+    subroutine skip_digits()
         do while (k <= n)
             if (.not. is_digit(str(k:k))) exit
             k = k + 1
         end do
-        end subroutine skip_digits
+    end subroutine skip_digits
 
-    end subroutine lex_number
+end subroutine lex_number
 !*****************************************************************************************
 
 !*****************************************************************************************
@@ -279,9 +279,9 @@
 !  Check if a Fortran dot-operator (e.g. `.and.`) starts at position `i`.
 !  Returns `kind=0` if there is no match.
 
-    pure subroutine match_dot_op(str, i, kind, j)
+pure subroutine match_dot_op(str, i, kind, j)
 
-    character(len=*), intent(in) :: str
+    character(len=*), intent(in) :: str !! the expression string
     integer, intent(in) :: i !! start position (of the `.`)
     integer, intent(out) :: kind !! the token kind (0 if not matched)
     integer, intent(out) :: j !! end position of the operator
@@ -301,24 +301,24 @@
         end if
     end do
 
-    end subroutine match_dot_op
+end subroutine match_dot_op
 !*****************************************************************************************
 
-    pure logical function is_digit(c)
-    character(len=1), intent(in) :: c
+pure logical function is_digit(c)
+    character(len=1), intent(in) :: c !! the character
     is_digit = c >= '0' .and. c <= '9'
-    end function is_digit
+end function is_digit
 
-    pure logical function is_letter(c)
-    character(len=1), intent(in) :: c
+pure logical function is_letter(c)
+    character(len=1), intent(in) :: c !! the character
     is_letter = (c >= 'a' .and. c <= 'z') .or. (c >= 'A' .and. c <= 'Z')
-    end function is_letter
+end function is_letter
 
-    pure logical function is_ident_char(c)
-    character(len=1), intent(in) :: c
+pure logical function is_ident_char(c)
+    character(len=1), intent(in) :: c !! the character
     is_ident_char = is_letter(c) .or. is_digit(c) .or. c == '_'
-    end function is_ident_char
+end function is_ident_char
 
 !*****************************************************************************************
-    end module fparse_lexer
+end module fparse_lexer
 !*****************************************************************************************

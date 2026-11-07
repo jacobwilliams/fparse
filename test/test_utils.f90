@@ -24,8 +24,9 @@
 !  Returns true if `a` and `b` agree to within the tolerance (relative and absolute).
 
     pure logical function close_to(a, b, tol)
-    real(wp), intent(in) :: a, b
-    real(wp), intent(in), optional :: tol
+    real(wp), intent(in) :: a !! the first number
+    real(wp), intent(in) :: b !! the second number
+    real(wp), intent(in), optional :: tol !! the tolerance (default `1.0e-12`)
     real(wp) :: t
     t = 1.0e-12_wp
     if (present(tol)) t = tol
@@ -39,9 +40,13 @@
 !  strings in array constructors).
 
     pure function str_list(s1, s2, s3, s4, s5, s6) result(list)
-    character(len=*), intent(in) :: s1
-    character(len=*), intent(in), optional :: s2, s3, s4, s5, s6
-    character(len=200), dimension(:), allocatable :: list
+    character(len=*), intent(in) :: s1 !! the first string
+    character(len=*), intent(in), optional :: s2 !! string 2
+    character(len=*), intent(in), optional :: s3 !! string 3
+    character(len=*), intent(in), optional :: s4 !! string 4
+    character(len=*), intent(in), optional :: s5 !! string 5
+    character(len=*), intent(in), optional :: s6 !! string 6
+    character(len=200), dimension(:), allocatable :: list !! the strings as an array
     ! note: this uses plain assignment (which pads each string) rather than
     ! nested array constructors, because some compilers' runtime checks
     ! wrongly report "Different CHARACTER lengths" for those.
@@ -64,12 +69,12 @@
 
     subroutine check_expr(error, expr, expected, vars, vals, tol)
 
-    type(error_type), allocatable, intent(out) :: error
-    character(len=*), intent(in) :: expr
-    real(wp), intent(in) :: expected
-    character(len=*), dimension(:), intent(in), optional :: vars
-    real(wp), dimension(:), intent(in), optional :: vals
-    real(wp), intent(in), optional :: tol
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
+    character(len=*), intent(in) :: expr !! the expression
+    real(wp), intent(in) :: expected !! the expected result
+    character(len=*), dimension(:), intent(in), optional :: vars !! the input variables
+    real(wp), dimension(:), intent(in), optional :: vals !! the variable values
+    real(wp), intent(in), optional :: tol !! the tolerance
 
     type(fparser) :: p
     integer :: status
@@ -121,12 +126,12 @@
 
     subroutine check_vexpr(error, expr, expected, vars, vals, tol)
 
-    type(error_type), allocatable, intent(out) :: error
-    character(len=*), intent(in) :: expr
-    real(wp), dimension(:), intent(in) :: expected
-    character(len=*), dimension(:), intent(in) :: vars
-    type(fparse_value), dimension(:), intent(in) :: vals
-    real(wp), intent(in), optional :: tol
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
+    character(len=*), intent(in) :: expr !! the expression
+    real(wp), dimension(:), intent(in) :: expected !! the expected result
+    character(len=*), dimension(:), intent(in) :: vars !! the input variables
+    type(fparse_value), dimension(:), intent(in) :: vals !! the variable values
+    real(wp), intent(in), optional :: tol !! the tolerance
 
     type(fparser) :: p
     integer :: status, i
@@ -167,10 +172,10 @@
 
     subroutine check_parse_error(error, exprs, vars, contains)
 
-    type(error_type), allocatable, intent(out) :: error
-    character(len=*), dimension(:), intent(in) :: exprs
-    character(len=*), dimension(:), intent(in) :: vars
-    character(len=*), intent(in) :: contains
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
+    character(len=*), dimension(:), intent(in) :: exprs !! the expressions
+    character(len=*), dimension(:), intent(in) :: vars !! the input variables
+    character(len=*), intent(in) :: contains !! text the error message must contain
 
     type(fparser) :: p
     integer :: status
@@ -196,11 +201,11 @@
 
     subroutine check_eval_error(error, expr, vars, vals, contains)
 
-    type(error_type), allocatable, intent(out) :: error
-    character(len=*), intent(in) :: expr
-    character(len=*), dimension(:), intent(in) :: vars
-    type(fparse_value), dimension(:), intent(in) :: vals
-    character(len=*), intent(in) :: contains
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
+    character(len=*), intent(in) :: expr !! the expression
+    character(len=*), dimension(:), intent(in) :: vars !! the input variables
+    type(fparse_value), dimension(:), intent(in) :: vals !! the variable values
+    character(len=*), intent(in) :: contains !! text the error message must contain
 
     type(fparser) :: p
     integer :: status, i
@@ -233,11 +238,11 @@
 
     subroutine check_derivs_fd(error, exprs, vars, vals, tol)
 
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     character(len=*), dimension(:), intent(in) :: exprs !! the expressions
     character(len=*), dimension(:), intent(in) :: vars !! the input variables
     type(fparse_value), dimension(:), intent(in) :: vals !! the variable values
-    real(wp), intent(in), optional :: tol
+    real(wp), intent(in), optional :: tol !! the tolerance
 
     type(fparser) :: p
     integer :: status, i, k, j

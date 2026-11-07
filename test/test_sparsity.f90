@@ -18,7 +18,7 @@
     contains
 
     subroutine collect_sparsity(testsuite)
-    type(unittest_type), allocatable, intent(out) :: testsuite(:)
+    type(unittest_type), allocatable, intent(out) :: testsuite(:) !! the tests in this suite
     testsuite = [ &
         new_unittest("scalar_system", test_scalar_system), &
         new_unittest("vector_system", test_vector_system), &
@@ -31,21 +31,21 @@
 
     ! --- a user function: f(a, b) = a * sum(b) ---
     subroutine fsum(args, res, stat)
-    type(fparse_value), dimension(:), intent(in) :: args
-    real(wp), dimension(:), allocatable, intent(out) :: res
-    integer, intent(inout) :: stat
+    type(fparse_value), dimension(:), intent(in) :: args !! the function arguments
+    real(wp), dimension(:), allocatable, intent(out) :: res !! the function result
+    integer, intent(inout) :: stat !! status code (nonzero for an error)
     res = args(1)%v * sum(args(2)%v)
     end subroutine fsum
 
     subroutine compare_jacobians(error, vars, vals, exprs, wrt, names)
     !! evaluate the derivatives with sparsity on and off (and with both evaluators),
     !! and check that all the jacobians (including those of the inputs) are the same.
-    type(error_type), allocatable, intent(out) :: error
-    character(len=*), dimension(:), intent(in) :: vars
-    type(fparse_value), dimension(:), intent(in) :: vals
-    character(len=*), dimension(:), intent(in) :: exprs
-    character(len=*), dimension(:), intent(in) :: wrt
-    character(len=*), dimension(:), intent(in), optional :: names
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
+    character(len=*), dimension(:), intent(in) :: vars !! the input variables
+    type(fparse_value), dimension(:), intent(in) :: vals !! the variable values
+    character(len=*), dimension(:), intent(in) :: exprs !! the expressions
+    character(len=*), dimension(:), intent(in) :: wrt !! the variables to differentiate with respect to
+    character(len=*), dimension(:), intent(in), optional :: names !! the output names
     type(fparser) :: p
     real(wp), dimension(:,:), allocatable :: j_dense, j_sparse
     integer :: i, k, status, iscalar
@@ -124,7 +124,7 @@
 
     subroutine test_scalar_system(error)
     !! a chain of scalar equations, each depending on a few variables
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call compare_jacobians(error, ['a','b','c','d','e'], &
         [fparse_value([0.3_wp]), fparse_value([1.1_wp]), fparse_value([-0.7_wp]), &
          fparse_value([2.0_wp]), fparse_value([0.5_wp])], &
@@ -134,7 +134,7 @@
 
     subroutine test_vector_system(error)
     !! vector variables and vector outputs (the tree evaluator)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call compare_jacobians(error, ['u','v','w','s'], &
         [fparse_value([0.3_wp, 1.0_wp, -0.5_wp]), fparse_value([1.5_wp, 0.4_wp, -0.7_wp]), &
          fparse_value([2.0_wp, 0.1_wp]), fparse_value([0.9_wp])], &
@@ -145,7 +145,7 @@
 
     subroutine test_independent(error)
     !! outputs that don't depend on some (or any) of the derivative variables
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp), dimension(:,:), allocatable :: jac
     real(wp) :: d
@@ -179,7 +179,7 @@
 
     subroutine test_conditionals_sparse(error)
     !! the dependency analysis is structural: both branches of an if are included
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call compare_jacobians(error, ['x','y','z'], &
         [fparse_value([0.5_wp]), fparse_value([2.0_wp]), fparse_value([-1.0_wp])], &
         str_list('a = if(x^2, y, z > 0)', 'b = if(a, z, x < y)', 'c = if(1, 2, x)'), ['x','y','z'])
@@ -191,7 +191,7 @@
 
     subroutine test_user_sparse(error)
     !! user functions (finite-difference derivatives)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call compare_jacobians(error, ['a','b','c'], &
         [fparse_value([2.0_wp]), fparse_value([1.0_wp, 2.0_wp, 3.0_wp]), fparse_value([0.5_wp])], &
         str_list('f = fsum(a, b)', 'g = f + c', 'h = fsum(c, [c, 1])'), ['a','b','c'])
@@ -199,7 +199,7 @@
 
     subroutine test_wrt_subsets(error)
     !! only some of the inputs are derivative variables, in a different order
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call compare_jacobians(error, ['a','b','c','d'], &
         [fparse_value([0.3_wp]), fparse_value([1.1_wp, 2.0_wp]), fparse_value([-0.7_wp]), fparse_value([2.0_wp])], &
         str_list('f = a*b', 'g = c + d', 'h = f*g'), ['d','b'])
@@ -207,7 +207,7 @@
 
     subroutine test_toggle(error)
     !! switching sparsity on and off between evaluations, and changing the wrt list
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: d
     integer :: i

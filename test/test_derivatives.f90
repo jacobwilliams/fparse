@@ -17,7 +17,7 @@
     contains
 
     subroutine collect_derivatives(testsuite)
-    type(unittest_type), allocatable, intent(out) :: testsuite(:)
+    type(unittest_type), allocatable, intent(out) :: testsuite(:) !! the tests in this suite
     testsuite = [ &
         new_unittest("analytic", test_analytic), &
         new_unittest("operators_fd", test_operators_fd), &
@@ -31,7 +31,7 @@
     end subroutine collect_derivatives
 
     subroutine test_analytic(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: d
     real(wp), parameter :: x = 0.8_wp, y = 1.3_wp
@@ -54,7 +54,7 @@
     end subroutine test_analytic
 
     subroutine test_operators_fd(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparse_value), dimension(2) :: v
     v = [fparse_value([0.7_wp]), fparse_value([1.9_wp])]
     call check_derivs_fd(error, str_list('x + y', 'x - y', 'x * y', 'x / y', '-x*y', 'x^y'), ['x','y'], v)
@@ -66,7 +66,7 @@
     end subroutine test_operators_fd
 
     subroutine test_functions_fd(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparse_value), dimension(2) :: v
     v = [fparse_value([0.37_wp]), fparse_value([-1.4_wp])]
     call check_derivs_fd(error, str_list('abs(x)', 'abs(y)', 'sqrt(x)', 'exp(x*y)', 'log(x)', 'log10(x)'), ['x','y'], v)
@@ -89,7 +89,7 @@
 
     subroutine test_chained(error)
     !! derivatives through dependent expressions
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: d
     real(wp), parameter :: x = 0.5_wp, y = 2.0_wp
@@ -106,7 +106,7 @@
     end subroutine test_chained
 
     subroutine test_vector_jacobians(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp), dimension(:,:), allocatable :: jac
     real(wp), dimension(3), parameter :: a = [1.0_wp, 2.0_wp, 3.0_wp], b = [-1.0_wp, 0.5_wp, 2.0_wp]
@@ -148,7 +148,7 @@
     end subroutine test_vector_jacobians
 
     subroutine test_vector_functions_fd(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparse_value), dimension(3) :: v
     v = [fparse_value([0.3_wp, -1.2_wp, 2.0_wp]), fparse_value([1.5_wp, 0.4_wp, -0.7_wp]), fparse_value([0.9_wp])]
     call check_derivs_fd(error, str_list('cross(a, b)', 'dot(a, b)', 'norm2(a)', 'sum(a*b)', 'product(a)', 's*a/norm2(b)'), &
@@ -164,7 +164,7 @@
     end subroutine test_vector_functions_fd
 
     subroutine test_conditionals_deriv(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: d
     call p%parse(['x'], str_list('if(x^2, -x, x > 0)'))
@@ -182,7 +182,7 @@
 
     subroutine test_subset_wrt(error)
     !! wrt order and subsets
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp), dimension(:,:), allocatable :: jac
     call p%parse(['x','y','z'], str_list('f = [x*y, y*z, z]'))
@@ -198,7 +198,7 @@
 
     subroutine test_no_derivatives(error)
     !! derivatives are not available if not requested
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: d
     integer :: status

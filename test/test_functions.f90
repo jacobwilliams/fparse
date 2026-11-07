@@ -17,7 +17,7 @@
     contains
 
     subroutine collect_functions(testsuite)
-    type(unittest_type), allocatable, intent(out) :: testsuite(:)
+    type(unittest_type), allocatable, intent(out) :: testsuite(:) !! the tests in this suite
     testsuite = [ &
         new_unittest("elementary", test_elementary), &
         new_unittest("trig", test_trig), &
@@ -30,7 +30,7 @@
     end subroutine collect_functions
 
     subroutine test_elementary(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     real(wp), parameter :: x = 0.7_wp
     call check_expr(error, 'abs(-x)', x, ['x'], [x]); if (allocated(error)) return
     call check_expr(error, 'sqrt(x)', sqrt(x), ['x'], [x]); if (allocated(error)) return
@@ -42,7 +42,7 @@
     end subroutine test_elementary
 
     subroutine test_trig(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     real(wp), parameter :: x = 0.3_wp
     call check_expr(error, 'sin(x)', sin(x), ['x'], [x]); if (allocated(error)) return
     call check_expr(error, 'cos(x)', cos(x), ['x'], [x]); if (allocated(error)) return
@@ -54,7 +54,7 @@
     end subroutine test_trig
 
     subroutine test_hyperbolic(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     real(wp), parameter :: x = 0.4_wp
     call check_expr(error, 'sinh(x)', sinh(x), ['x'], [x]); if (allocated(error)) return
     call check_expr(error, 'cosh(x)', cosh(x), ['x'], [x]); if (allocated(error)) return
@@ -65,7 +65,7 @@
     end subroutine test_hyperbolic
 
     subroutine test_rounding(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_expr(error, 'floor(2.7)', 2.0_wp); if (allocated(error)) return
     call check_expr(error, 'floor(-2.2)', -3.0_wp); if (allocated(error)) return
     call check_expr(error, 'ceiling(2.2)', 3.0_wp); if (allocated(error)) return
@@ -78,7 +78,7 @@
     end subroutine test_rounding
 
     subroutine test_two_arg(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_expr(error, 'mod(7, 3)', 1.0_wp); if (allocated(error)) return
     call check_expr(error, 'mod(-7, 3)', -1.0_wp); if (allocated(error)) return
     call check_expr(error, 'modulo(-7, 3)', 2.0_wp); if (allocated(error)) return
@@ -90,7 +90,7 @@
     end subroutine test_two_arg
 
     subroutine test_max_min(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_expr(error, 'max(x, y)', 3.0_wp, ['x','y'], [2.0_wp, 3.0_wp]); if (allocated(error)) return
     call check_expr(error, 'min(x, y)', 2.0_wp, ['x','y'], [2.0_wp, 3.0_wp]); if (allocated(error)) return
     call check_expr(error, 'max(1, 5, 3, -2)', 5.0_wp); if (allocated(error)) return
@@ -98,7 +98,7 @@
     end subroutine test_max_min
 
     subroutine test_aliases(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     call check_expr(error, 'ln(2)', log(2.0_wp)); if (allocated(error)) return
     call check_expr(error, 'ceil(1.1)', 2.0_wp); if (allocated(error)) return
     call check_expr(error, 'round(1.6)', 2.0_wp); if (allocated(error)) return
@@ -107,7 +107,7 @@
     end subroutine test_aliases
 
     subroutine test_nested(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     real(wp), parameter :: x = 0.5_wp, y = 1.5_wp
     call check_expr(error, 'sin(cos(exp(x)))', sin(cos(exp(x))), ['x'], [x]); if (allocated(error)) return
     call check_expr(error, 'sqrt(x^2 + y^2) * atan2(y, x) - log(1 + abs(sin(x*y)))', &

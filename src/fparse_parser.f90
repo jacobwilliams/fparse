@@ -24,83 +24,83 @@
 !
 !  Note that, as in Fortran, `-x**2` is `-(x**2)`.
 
-    module fparse_parser
+module fparse_parser
 
-    use fparse_common
-    use fparse_lexer
-    use fparse_functions
+use fparse_common
+use fparse_lexer
+use fparse_functions
 
-    implicit none
+implicit none
 
-    private
+private
 
-    ! node kinds:
-    integer, parameter, public :: node_const   = 1 !! a constant
-    integer, parameter, public :: node_var     = 2 !! a variable (`op` is the variable index)
-    integer, parameter, public :: node_unary   = 3 !! a unary operator (`op` is the operator)
-    integer, parameter, public :: node_binary  = 4 !! a binary operator (`op` is the operator)
-    integer, parameter, public :: node_builtin = 5 !! a built-in function (`op` is the function id)
-    integer, parameter, public :: node_user    = 6 !! a user function (`op` is the function index)
-    integer, parameter, public :: node_vector  = 7 !! a vector constructor `[a,b,...]`
-    integer, parameter, public :: node_index   = 8 !! an indexing operation `a[i]`
+! node kinds:
+integer, parameter, public :: node_const   = 1 !! a constant
+integer, parameter, public :: node_var     = 2 !! a variable (`op` is the variable index)
+integer, parameter, public :: node_unary   = 3 !! a unary operator (`op` is the operator)
+integer, parameter, public :: node_binary  = 4 !! a binary operator (`op` is the operator)
+integer, parameter, public :: node_builtin = 5 !! a built-in function (`op` is the function id)
+integer, parameter, public :: node_user    = 6 !! a user function (`op` is the function index)
+integer, parameter, public :: node_vector  = 7 !! a vector constructor `[a,b,...]`
+integer, parameter, public :: node_index   = 8 !! an indexing operation `a[i]`
 
-    ! operators:
-    integer, parameter, public :: op_neg = 1  !! unary `-`
-    integer, parameter, public :: op_not = 2  !! logical not
-    integer, parameter, public :: op_add = 3  !! `+`
-    integer, parameter, public :: op_sub = 4  !! `-`
-    integer, parameter, public :: op_mul = 5  !! `*`
-    integer, parameter, public :: op_div = 6  !! `/`
-    integer, parameter, public :: op_pow = 7  !! `^`
-    integer, parameter, public :: op_eq  = 8  !! `==`
-    integer, parameter, public :: op_ne  = 9  !! `/=`
-    integer, parameter, public :: op_lt  = 10 !! `<`
-    integer, parameter, public :: op_le  = 11 !! `<=`
-    integer, parameter, public :: op_gt  = 12 !! `>`
-    integer, parameter, public :: op_ge  = 13 !! `>=`
-    integer, parameter, public :: op_and = 14 !! logical and
-    integer, parameter, public :: op_or  = 15 !! logical or
+! operators:
+integer, parameter, public :: op_neg = 1  !! unary `-`
+integer, parameter, public :: op_not = 2  !! logical not
+integer, parameter, public :: op_add = 3  !! `+`
+integer, parameter, public :: op_sub = 4  !! `-`
+integer, parameter, public :: op_mul = 5  !! `*`
+integer, parameter, public :: op_div = 6  !! `/`
+integer, parameter, public :: op_pow = 7  !! `^`
+integer, parameter, public :: op_eq  = 8  !! `==`
+integer, parameter, public :: op_ne  = 9  !! `/=`
+integer, parameter, public :: op_lt  = 10 !! `<`
+integer, parameter, public :: op_le  = 11 !! `<=`
+integer, parameter, public :: op_gt  = 12 !! `>`
+integer, parameter, public :: op_ge  = 13 !! `>=`
+integer, parameter, public :: op_and = 14 !! logical and
+integer, parameter, public :: op_or  = 15 !! logical or
 
-    type, public :: node_t
-        !! A node in an expression tree.
-        integer :: kind = 0 !! node kind (`node_*` parameter)
-        integer :: op = 0 !! operator, function id, or variable index (depending on `kind`)
-        real(wp) :: value = 0.0_wp !! the value (for constants)
-        integer, dimension(:), allocatable :: args !! indices of the child nodes
-        integer :: pos = 0 !! position in the expression string (for error messages)
-        integer :: iref = 0 !! for variables: the position of the variable in `expr_tree%refs`
-    end type node_t
+type, public :: node_t
+    !! A node in an expression tree.
+    integer :: kind = 0 !! node kind (`node_*` parameter)
+    integer :: op = 0 !! operator, function id, or variable index (depending on `kind`)
+    real(wp) :: value = 0.0_wp !! the value (for constants)
+    integer, dimension(:), allocatable :: args !! indices of the child nodes
+    integer :: pos = 0 !! position in the expression string (for error messages)
+    integer :: iref = 0 !! for variables: the position of the variable in `expr_tree%refs`
+end type node_t
 
-    type, public :: expr_tree
-        !! An expression tree. The nodes are stored in a flat array.
-        type(node_t), dimension(:), allocatable :: nodes !! the nodes
-        integer :: n_nodes = 0 !! number of nodes used
-        integer :: root = 0 !! index of the root node
-        integer, dimension(:), allocatable :: refs !! indices of the variables referenced by the expression
-        type(val_t), dimension(:), allocatable :: buf !! work buffers: the value of each node
-                                                      !! (reused between evaluations to avoid reallocation)
-    end type expr_tree
+type, public :: expr_tree
+    !! An expression tree. The nodes are stored in a flat array.
+    type(node_t), dimension(:), allocatable :: nodes !! the nodes
+    integer :: n_nodes = 0 !! number of nodes used
+    integer :: root = 0 !! index of the root node
+    integer, dimension(:), allocatable :: refs !! indices of the variables referenced by the expression
+    type(val_t), dimension(:), allocatable :: buf !! work buffers: the value of each node
+                                                  !! (reused between evaluations to avoid reallocation)
+end type expr_tree
 
-    type :: parser_t
-        !! Parser state.
-        type(token_t), dimension(:), allocatable :: toks !! the tokens
-        integer :: ip = 1 !! current token index
-        type(expr_tree) :: tree !! the tree being built
-        type(error_t) :: err !! error status
-        type(string_t), dimension(:), allocatable :: vars !! variable names
-        type(user_function), dimension(:), allocatable :: funcs !! user functions
-    end type parser_t
+type :: parser_t
+    !! Parser state.
+    type(token_t), dimension(:), allocatable :: toks !! the tokens
+    integer :: ip = 1 !! current token index
+    type(expr_tree) :: tree !! the tree being built
+    type(error_t) :: err !! error status
+    type(string_t), dimension(:), allocatable :: vars !! variable names
+    type(user_function), dimension(:), allocatable :: funcs !! user functions
+end type parser_t
 
-    public :: parse_expression
+public :: parse_expression
 
-    contains
+contains
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
 !  Parse an expression string into an expression tree.
 
-    subroutine parse_expression(str, vars, funcs, tree, err)
+subroutine parse_expression(str, vars, funcs, tree, err)
 
     character(len=*), intent(in) :: str !! the expression
     type(string_t), dimension(:), intent(in) :: vars !! the variable names (lowercase)
@@ -143,56 +143,56 @@
     tree%root = root
     allocate(tree%buf(tree%n_nodes))
 
-    end subroutine parse_expression
+end subroutine parse_expression
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
 !  Kind of the current token.
 
-    pure integer function peek(p)
-    type(parser_t), intent(in) :: p
+pure integer function peek(p)
+    type(parser_t), intent(in) :: p !! the parser state
     peek = p%toks(p%ip)%kind
-    end function peek
+end function peek
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
 !  Position of the current token.
 
-    pure integer function cur_pos(p)
-    type(parser_t), intent(in) :: p
+pure integer function cur_pos(p)
+    type(parser_t), intent(in) :: p !! the parser state
     cur_pos = p%toks(p%ip)%pos
-    end function cur_pos
+end function cur_pos
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
 !  Raise an "unexpected token" error for the current token.
 
-    subroutine unexpected(p)
-    type(parser_t), intent(inout) :: p
+subroutine unexpected(p)
+    type(parser_t), intent(inout) :: p !! the parser state
     if (peek(p) == tok_end) then
         call p%err%set('unexpected end of expression', cur_pos(p))
     else
         call p%err%set('unexpected "'//p%toks(p%ip)%text//'"', cur_pos(p))
     end if
-    end subroutine unexpected
+end subroutine unexpected
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
 !  Add a node to the tree. Returns the node index.
 
-    function add_node(p, kind, op, args, pos, value) result(idx)
+function add_node(p, kind, op, args, pos, value) result(idx)
 
-    type(parser_t), intent(inout) :: p
+    type(parser_t), intent(inout) :: p !! the parser state
     integer, intent(in) :: kind !! node kind
     integer, intent(in) :: op !! operator/function/variable
     integer, dimension(:), intent(in) :: args !! child nodes
     integer, intent(in) :: pos !! position in the string
     real(wp), intent(in), optional :: value !! constant value
-    integer :: idx
+    integer :: idx !! index of the new node
 
     type(node_t), dimension(:), allocatable :: tmp
 
@@ -209,16 +209,16 @@
     p%tree%nodes(idx)%pos = pos
     if (present(value)) p%tree%nodes(idx)%value = value
 
-    end function add_node
+end function add_node
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
 !  `expr := and_expr { '||' and_expr }`
 
-    recursive function parse_or(p) result(n)
-    type(parser_t), intent(inout) :: p
-    integer :: n
+recursive function parse_or(p) result(n)
+    type(parser_t), intent(inout) :: p !! the parser state
+    integer :: n !! index of the parsed node
     integer :: m, pos
     n = parse_and(p)
     if (p%err%failed) return
@@ -229,16 +229,16 @@
         if (p%err%failed) return
         n = add_node(p, node_binary, op_or, [n, m], pos)
     end do
-    end function parse_or
+end function parse_or
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
 !  `and_expr := not_expr { '&&' not_expr }`
 
-    recursive function parse_and(p) result(n)
-    type(parser_t), intent(inout) :: p
-    integer :: n
+recursive function parse_and(p) result(n)
+    type(parser_t), intent(inout) :: p !! the parser state
+    integer :: n !! index of the parsed node
     integer :: m, pos
     n = parse_not(p)
     if (p%err%failed) return
@@ -249,16 +249,16 @@
         if (p%err%failed) return
         n = add_node(p, node_binary, op_and, [n, m], pos)
     end do
-    end function parse_and
+end function parse_and
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
 !  `not_expr := '!' not_expr | cmp_expr`
 
-    recursive function parse_not(p) result(n)
-    type(parser_t), intent(inout) :: p
-    integer :: n
+recursive function parse_not(p) result(n)
+    type(parser_t), intent(inout) :: p !! the parser state
+    integer :: n !! index of the parsed node
     integer :: m, pos
     if (peek(p) == tok_not) then
         pos = cur_pos(p)
@@ -269,16 +269,16 @@
     else
         n = parse_cmp(p)
     end if
-    end function parse_not
+end function parse_not
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
 !  `cmp_expr := add_expr { cmp_op add_expr }`
 
-    recursive function parse_cmp(p) result(n)
-    type(parser_t), intent(inout) :: p
-    integer :: n
+recursive function parse_cmp(p) result(n)
+    type(parser_t), intent(inout) :: p !! the parser state
+    integer :: n !! index of the parsed node
     integer :: m, pos, op
     n = parse_add(p)
     if (p%err%failed) return
@@ -299,16 +299,16 @@
         if (p%err%failed) return
         n = add_node(p, node_binary, op, [n, m], pos)
     end do
-    end function parse_cmp
+end function parse_cmp
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
 !  `add_expr := mul_expr { ('+'|'-') mul_expr }`
 
-    recursive function parse_add(p) result(n)
-    type(parser_t), intent(inout) :: p
-    integer :: n
+recursive function parse_add(p) result(n)
+    type(parser_t), intent(inout) :: p !! the parser state
+    integer :: n !! index of the parsed node
     integer :: m, pos, op
     n = parse_mul(p)
     if (p%err%failed) return
@@ -325,16 +325,16 @@
         if (p%err%failed) return
         n = add_node(p, node_binary, op, [n, m], pos)
     end do
-    end function parse_add
+end function parse_add
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
 !  `mul_expr := unary { ('*'|'/') unary }`
 
-    recursive function parse_mul(p) result(n)
-    type(parser_t), intent(inout) :: p
-    integer :: n
+recursive function parse_mul(p) result(n)
+    type(parser_t), intent(inout) :: p !! the parser state
+    integer :: n !! index of the parsed node
     integer :: m, pos, op
     n = parse_unary(p)
     if (p%err%failed) return
@@ -351,16 +351,16 @@
         if (p%err%failed) return
         n = add_node(p, node_binary, op, [n, m], pos)
     end do
-    end function parse_mul
+end function parse_mul
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
 !  `unary := ('-'|'+'|'!') unary | power`
 
-    recursive function parse_unary(p) result(n)
-    type(parser_t), intent(inout) :: p
-    integer :: n
+recursive function parse_unary(p) result(n)
+    type(parser_t), intent(inout) :: p !! the parser state
+    integer :: n !! index of the parsed node
     integer :: m, pos
     n = 0
     pos = cur_pos(p)
@@ -387,16 +387,16 @@
     case default
         n = parse_power(p)
     end select
-    end function parse_unary
+end function parse_unary
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
 !  `power := postfix [ '^' unary ]`
 
-    recursive function parse_power(p) result(n)
-    type(parser_t), intent(inout) :: p
-    integer :: n
+recursive function parse_power(p) result(n)
+    type(parser_t), intent(inout) :: p !! the parser state
+    integer :: n !! index of the parsed node
     integer :: m, pos
     n = parse_postfix(p)
     if (p%err%failed) return
@@ -407,16 +407,16 @@
         if (p%err%failed) return
         n = add_node(p, node_binary, op_pow, [n, m], pos)
     end if
-    end function parse_power
+end function parse_power
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
 !  `postfix := primary { '[' expr ']' }`
 
-    recursive function parse_postfix(p) result(n)
-    type(parser_t), intent(inout) :: p
-    integer :: n
+recursive function parse_postfix(p) result(n)
+    type(parser_t), intent(inout) :: p !! the parser state
+    integer :: n !! index of the parsed node
     integer :: m, pos
     n = parse_primary(p)
     if (p%err%failed) return
@@ -432,7 +432,7 @@
         p%ip = p%ip + 1
         n = add_node(p, node_index, 0, [n, m], pos)
     end do
-    end function parse_postfix
+end function parse_postfix
 !*****************************************************************************************
 
 !*****************************************************************************************
@@ -440,10 +440,10 @@
 !  Parse a primary expression: a number, variable, function call,
 !  parenthesized expression, or vector constructor.
 
-    recursive function parse_primary(p) result(n)
+recursive function parse_primary(p) result(n)
 
-    type(parser_t), intent(inout) :: p
-    integer :: n
+    type(parser_t), intent(inout) :: p !! the parser state
+    integer :: n !! index of the parsed node
 
     integer :: pos, k, id, min_args, max_args
     integer, dimension(:), allocatable :: args
@@ -456,7 +456,7 @@
     select case (peek(p))
 
     case (tok_number)
-        n = add_node(p, node_const, 0, [integer ::], pos, p%toks(p%ip)%value)
+        n = add_node(p, node_const, 0, [integer :: ], pos, p%toks(p%ip)%value)
         p%ip = p%ip + 1
 
     case (tok_lparen)
@@ -522,14 +522,14 @@
             ! variable or constant
             do k = 1, size(p%vars)
                 if (p%vars(k)%str == name) then
-                    n = add_node(p, node_var, k, [integer ::], pos)
+                    n = add_node(p, node_var, k, [integer :: ], pos)
                     if (.not. any(p%tree%refs == k)) p%tree%refs = [p%tree%refs, k]
                     p%tree%nodes(n)%iref = findloc(p%tree%refs, k, dim=1)
                     return
                 end if
             end do
             if (name == 'pi') then
-                n = add_node(p, node_const, 0, [integer ::], pos, acos(-1.0_wp))
+                n = add_node(p, node_const, 0, [integer :: ], pos, acos(-1.0_wp))
             else
                 call p%err%set('undefined variable "'//name//'"', pos)
             end if
@@ -539,7 +539,7 @@
         call unexpected(p)
     end select
 
-    end function parse_primary
+end function parse_primary
 !*****************************************************************************************
 
 !*****************************************************************************************
@@ -548,9 +548,9 @@
 !  the token `close` (which is consumed). The opening token
 !  must already have been consumed.
 
-    recursive subroutine parse_list(p, close, args)
+recursive subroutine parse_list(p, close, args)
 
-    type(parser_t), intent(inout) :: p
+    type(parser_t), intent(inout) :: p !! the parser state
     integer, intent(in) :: close !! closing token kind
     integer, dimension(:), allocatable, intent(out) :: args !! the parsed expression nodes
 
@@ -579,9 +579,9 @@
     end if
     p%ip = p%ip + 1
 
-    end subroutine parse_list
+end subroutine parse_list
 !*****************************************************************************************
 
 !*****************************************************************************************
-    end module fparse_parser
+end module fparse_parser
 !*****************************************************************************************

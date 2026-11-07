@@ -17,7 +17,7 @@
     contains
 
     subroutine collect_user_functions(testsuite)
-    type(unittest_type), allocatable, intent(out) :: testsuite(:)
+    type(unittest_type), allocatable, intent(out) :: testsuite(:) !! the tests in this suite
     testsuite = [ &
         new_unittest("basic", test_basic_user), &
         new_unittest("vector", test_vector_user), &
@@ -32,17 +32,17 @@
 
     subroutine sq(args, res, stat)
     !! `sq(x) = x^2` (elementwise)
-    type(fparse_value), dimension(:), intent(in) :: args
-    real(wp), dimension(:), allocatable, intent(out) :: res
-    integer, intent(inout) :: stat
+    type(fparse_value), dimension(:), intent(in) :: args !! the function arguments
+    real(wp), dimension(:), allocatable, intent(out) :: res !! the function result
+    integer, intent(inout) :: stat !! status code (nonzero for an error)
     res = args(1)%v**2
     end subroutine sq
 
     subroutine dsq(args, iarg, jac, stat)
-    type(fparse_value), dimension(:), intent(in) :: args
-    integer, intent(in) :: iarg
-    real(wp), dimension(:,:), allocatable, intent(out) :: jac
-    integer, intent(inout) :: stat
+    type(fparse_value), dimension(:), intent(in) :: args !! the function arguments
+    integer, intent(in) :: iarg !! the index of the argument to differentiate with respect to
+    real(wp), dimension(:,:), allocatable, intent(out) :: jac !! the jacobian `d(res)/d(args(iarg)%v)`
+    integer, intent(inout) :: stat !! status code (nonzero for an error)
     integer :: i, n
     n = size(args(1)%v)
     allocate(jac(n, n), source=0.0_wp)
@@ -53,9 +53,9 @@
 
     subroutine wsum(args, res, stat)
     !! `wsum(a, b) = a(1)*b + a(2)` : a is a 2-vector
-    type(fparse_value), dimension(:), intent(in) :: args
-    real(wp), dimension(:), allocatable, intent(out) :: res
-    integer, intent(inout) :: stat
+    type(fparse_value), dimension(:), intent(in) :: args !! the function arguments
+    real(wp), dimension(:), allocatable, intent(out) :: res !! the function result
+    integer, intent(inout) :: stat !! status code (nonzero for an error)
     if (size(args(1)%v) /= 2) then
         stat = 1
         return
@@ -65,9 +65,9 @@
 
     subroutine count_args(args, res, stat)
     !! returns `[nargs, sum of all elements of all arguments]`
-    type(fparse_value), dimension(:), intent(in) :: args
-    real(wp), dimension(:), allocatable, intent(out) :: res
-    integer, intent(inout) :: stat
+    type(fparse_value), dimension(:), intent(in) :: args !! the function arguments
+    real(wp), dimension(:), allocatable, intent(out) :: res !! the function result
+    integer, intent(inout) :: stat !! status code (nonzero for an error)
     integer :: i
     res = [real(size(args), wp), 0.0_wp]
     do i = 1, size(args)
@@ -77,32 +77,32 @@
 
     subroutine my_sin(args, res, stat)
     !! replaces the built-in sin
-    type(fparse_value), dimension(:), intent(in) :: args
-    real(wp), dimension(:), allocatable, intent(out) :: res
-    integer, intent(inout) :: stat
+    type(fparse_value), dimension(:), intent(in) :: args !! the function arguments
+    real(wp), dimension(:), allocatable, intent(out) :: res !! the function result
+    integer, intent(inout) :: stat !! status code (nonzero for an error)
     res = 2.0_wp * args(1)%v
     end subroutine my_sin
 
     subroutine fails(args, res, stat)
-    type(fparse_value), dimension(:), intent(in) :: args
-    real(wp), dimension(:), allocatable, intent(out) :: res
-    integer, intent(inout) :: stat
+    type(fparse_value), dimension(:), intent(in) :: args !! the function arguments
+    real(wp), dimension(:), allocatable, intent(out) :: res !! the function result
+    integer, intent(inout) :: stat !! status code (nonzero for an error)
     stat = 42
     end subroutine fails
 
     subroutine bad_dsq(args, iarg, jac, stat)
     !! returns the wrong shape
-    type(fparse_value), dimension(:), intent(in) :: args
-    integer, intent(in) :: iarg
-    real(wp), dimension(:,:), allocatable, intent(out) :: jac
-    integer, intent(inout) :: stat
+    type(fparse_value), dimension(:), intent(in) :: args !! the function arguments
+    integer, intent(in) :: iarg !! the index of the argument to differentiate with respect to
+    real(wp), dimension(:,:), allocatable, intent(out) :: jac !! the jacobian `d(res)/d(args(iarg)%v)`
+    integer, intent(inout) :: stat !! status code (nonzero for an error)
     allocate(jac(5, 5), source=0.0_wp)
     end subroutine bad_dsq
 
     ! --- tests ---
 
     subroutine test_basic_user(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: r
     call p%add_function('Sq', sq, is_pure=.true., nargs=1)
@@ -115,7 +115,7 @@
     end subroutine test_basic_user
 
     subroutine test_vector_user(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp), dimension(:), allocatable :: v
     call p%add_function('wsum', wsum, is_pure=.true., nargs=2)
@@ -130,7 +130,7 @@
     end subroutine test_vector_user
 
     subroutine test_variadic(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp), dimension(:), allocatable :: v
     call p%add_function('count', count_args, is_pure=.true.)   ! any number of arguments
@@ -144,7 +144,7 @@
     end subroutine test_variadic
 
     subroutine test_override(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: r
     call p%add_function('sin', my_sin, is_pure=.true., nargs=1)
@@ -156,7 +156,7 @@
     end subroutine test_override
 
     subroutine test_analytic_derivative(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp), dimension(:,:), allocatable :: jac
     call p%add_function('sq', sq, is_pure=.true., nargs=1, df=dsq)
@@ -175,7 +175,7 @@
 
     subroutine test_fd_derivative(error)
     !! derivative computed using finite differences
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp), dimension(:,:), allocatable :: jac
     call p%add_function('wsum', wsum, is_pure=.true., nargs=2)
@@ -195,7 +195,7 @@
     end subroutine test_fd_derivative
 
     subroutine test_user_errors(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     integer :: status
     character(len=:), allocatable :: errmsg

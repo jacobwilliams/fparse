@@ -24,7 +24,7 @@
     contains
 
     subroutine collect_cache(testsuite)
-    type(unittest_type), allocatable, intent(out) :: testsuite(:)
+    type(unittest_type), allocatable, intent(out) :: testsuite(:) !! the tests in this suite
     testsuite = [ &
         new_unittest("values", test_values_cached), &
         new_unittest("derivatives", test_derivatives_cached), &
@@ -38,35 +38,35 @@
 
     subroutine counted(args, res, stat)
     !! `counted(x) = 2*x`, counting the calls
-    type(fparse_value), dimension(:), intent(in) :: args
-    real(wp), dimension(:), allocatable, intent(out) :: res
-    integer, intent(inout) :: stat
+    type(fparse_value), dimension(:), intent(in) :: args !! the function arguments
+    real(wp), dimension(:), allocatable, intent(out) :: res !! the function result
+    integer, intent(inout) :: stat !! status code (nonzero for an error)
     ncalls = ncalls + 1
     res = 2.0_wp * args(1)%v
     end subroutine counted
 
     subroutine counted3(args, res, stat)
     !! `counted3(x) = 3*x`, counting the calls
-    type(fparse_value), dimension(:), intent(in) :: args
-    real(wp), dimension(:), allocatable, intent(out) :: res
-    integer, intent(inout) :: stat
+    type(fparse_value), dimension(:), intent(in) :: args !! the function arguments
+    real(wp), dimension(:), allocatable, intent(out) :: res !! the function result
+    integer, intent(inout) :: stat !! status code (nonzero for an error)
     ncalls = ncalls + 1
     res = 3.0_wp * args(1)%v
     end subroutine counted3
 
     subroutine impure_counted(args, res, stat)
     !! `impure_counted(x) = x`, counting the calls (it is added as impure)
-    type(fparse_value), dimension(:), intent(in) :: args
-    real(wp), dimension(:), allocatable, intent(out) :: res
-    integer, intent(inout) :: stat
+    type(fparse_value), dimension(:), intent(in) :: args !! the function arguments
+    real(wp), dimension(:), allocatable, intent(out) :: res !! the function result
+    integer, intent(inout) :: stat !! status code (nonzero for an error)
     ncalls_impure = ncalls_impure + 1
     res = args(1)%v
     end subroutine impure_counted
 
     subroutine setup(p, is_pure)
     !! `f = counted(x) + y`, `g = f * y`, with x = 1, y = 2
-    type(fparser), intent(out) :: p
-    logical, intent(in) :: is_pure
+    type(fparser), intent(out) :: p !! the parser
+    logical, intent(in) :: is_pure !! if `counted` is declared as pure
     call p%add_function('counted', counted, is_pure=is_pure, nargs=1)
     call p%parse(['x', 'y'], str_list('f = counted(x) + y', 'g = f * y'))
     call p%set_variable('x', 1.0_wp)
@@ -75,7 +75,7 @@
     end subroutine setup
 
     subroutine test_values_cached(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: r
     call setup(p, .true.)
@@ -102,7 +102,7 @@
     end subroutine test_values_cached
 
     subroutine test_derivatives_cached(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: d, r
     integer :: n, status
@@ -134,7 +134,7 @@
 
     subroutine test_impure(error)
     !! with an impure function, the results are never cached
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     integer :: n
     call setup(p, .false.)
@@ -157,7 +157,7 @@
     subroutine test_impure_per_expression(error)
     !! an impure function only prevents caching for the expressions that use it
     !! (and the ones that depend on them)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: r
     call p%add_function('counted', counted, is_pure=.true., nargs=1)
@@ -205,7 +205,7 @@
     end subroutine test_impure_per_expression
 
     subroutine test_disabled(error)
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     call setup(p, .true.)
     call p%set_caching(.false.)
@@ -221,7 +221,7 @@
     subroutine test_exact(error)
     !! the inputs must be exactly the same
     use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: nan
     call setup(p, .true.)
@@ -256,13 +256,13 @@
     end subroutine test_exact
 
     pure real(wp) function nextafter_up(x)
-    real(wp), intent(in) :: x
+    real(wp), intent(in) :: x !! the number
     nextafter_up = nearest(x, 1.0_wp)
     end function nextafter_up
 
     subroutine test_invalidation(error)
     !! changing options or functions invalidates the cache
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     real(wp) :: r
     call setup(p, .true.)
@@ -293,7 +293,7 @@
 
     subroutine test_errors_not_cached(error)
     !! a failed evaluation is not cached
-    type(error_type), allocatable, intent(out) :: error
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
     type(fparser) :: p
     integer :: status
     call p%parse(['x'], ['log(x)'])
