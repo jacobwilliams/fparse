@@ -42,12 +42,19 @@
     character(len=*), intent(in) :: s1
     character(len=*), intent(in), optional :: s2, s3, s4, s5, s6
     character(len=200), dimension(:), allocatable :: list
-    list = [character(len=200) :: s1]
-    if (present(s2)) list = [list, [character(len=200) :: s2]]
-    if (present(s3)) list = [list, [character(len=200) :: s3]]
-    if (present(s4)) list = [list, [character(len=200) :: s4]]
-    if (present(s5)) list = [list, [character(len=200) :: s5]]
-    if (present(s6)) list = [list, [character(len=200) :: s6]]
+    ! note: this uses plain assignment (which pads each string) rather than
+    ! nested array constructors, because some compilers' runtime checks
+    ! wrongly report "Different CHARACTER lengths" for those.
+    character(len=200), dimension(6) :: tmp
+    integer :: n
+    n = 1
+    tmp(1) = s1
+    if (present(s2)) then; n = n + 1; tmp(n) = s2; end if
+    if (present(s3)) then; n = n + 1; tmp(n) = s3; end if
+    if (present(s4)) then; n = n + 1; tmp(n) = s4; end if
+    if (present(s5)) then; n = n + 1; tmp(n) = s5; end if
+    if (present(s6)) then; n = n + 1; tmp(n) = s6; end if
+    list = tmp(1:n)
     end function str_list
 !*****************************************************************************************
 
