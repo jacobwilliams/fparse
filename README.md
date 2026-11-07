@@ -5,7 +5,7 @@ A Fortran function parser and evaluator for expressions involving multiple varia
 
 * **Standard modern Fortran.** Object-oriented, with no compiler extensions. Documented with FORD-compatible doc comments. MIT licensed.
 * **Expressions of any number of variables**, such as `sin(x) + 2.0*y`. Each expression is parsed once into an internal tree, and you can then evaluate it as many times as you like with new variable values. When all the variables are scalars, a compiled scalar instruction list is used instead, which is several times faster.
-* **Systems of named expressions.** You pass a list of expressions such as `['z = sin(x) + 2.0*y', 'w = z + x']`. An output can be used in other expressions, and the evaluation order is worked out from the dependencies automatically. Circular dependencies are reported as errors.
+* **Systems of named expressions.** You pass a list of expressions and their output names, such as `['sin(x) + 2.0*y', 'z + x']` named `['z', 'w']`. An output can be used in other expressions, and the evaluation order is worked out from the dependencies automatically. Circular dependencies are reported as errors.
 * **Scalars and vectors.** A variable can be a scalar or a vector, and operations and functions work element by element as in Fortran (`sin(x)` is a vector if `x` is a vector). Scalars are broadcast. You can build vectors with `[a, b, c]` and index them with `v[i]`.
 * **Operators:** arithmetic (`+ - * / ^ **`), relational (`== /= < <= > >=`, plus the Fortran `.eq.`-style forms) and logical (`&& || !`, plus `.and. .or. .not.`).
 * **Built-in functions:**
@@ -34,7 +34,9 @@ integer :: status
 character(len=:), allocatable :: errmsg
 
 ! the order of the expressions doesn't matter; it is determined from the dependencies
-call p%parse(['x', 'y'], [character(len=20) :: 'w = z + x', 'z = sin(x) + 2.0*y'], &
+call p%parse(variables   = ['x', 'y'], &
+             expressions = [character(len=20) :: 'z + x', 'sin(x) + 2.0*y'], &
+             names       = ['w', 'z'], &
              status=status, errmsg=errmsg)
 if (status /= 0) error stop errmsg
 
@@ -49,7 +51,7 @@ Every method takes the optional outputs `status` (0 means success) and `errmsg`.
 
 #### Expressions
 
-* An expression is written as `name = expr`, or as just `expr` (an anonymous expression, which you can only retrieve by index, e.g. `p%get(1, val)`). You can also give the output names in the `names=` argument of `parse`.
+* The output names are given in the `names=` argument of `parse`, one per expression. Inputs and outputs must all have different names. Alternatively, leave out `names=` and write each expression as `name = expr`. An expression with no name (a blank entry in `names`, or no `name =`) is anonymous: you can only retrieve it by index, e.g. `p%get(1, val)`.
 * Operators, from lowest to highest precedence:
   * `||` and `.or.`
   * `&&` and `.and.`

@@ -5,7 +5,7 @@
     module test_errors
 
     use fparse
-    use testdrive, only: new_unittest, unittest_type, error_type, check
+    use testdrive, only: new_unittest, unittest_type, error_type, check, test_failed
     use test_utils
 
     implicit none
@@ -62,9 +62,34 @@
     call check_parse_error(error, str_list('a = 1', 'A = 2'), ['x'], 'duplicate name "a"'); if (allocated(error)) return
     call check_parse_error(error, ['2a = 1'], ['x'], 'invalid output name'); if (allocated(error)) return
     call check_parse_error(error, ['a.b = 1'], ['x'], 'invalid output name'); if (allocated(error)) return
+    ! output names given with the `names` argument:
+    call check_names_error(error, ['x','y'], str_list('x + y', 'x - y'), ['a', 'A'], 'duplicate name "a"')
+    if (allocated(error)) return
+    call check_names_error(error, ['x','y'], str_list('x + y', 'x - y'), ['a', 'Y'], 'duplicate name "y"')
+    if (allocated(error)) return
+    call check_names_error(error, ['x','y'], str_list('x + y'), ['2a'], 'invalid output name')
+    if (allocated(error)) return
+    call check_names_error(error, ['x','y'], str_list('w = x + y'), ['w'], 'unexpected "="')
+    if (allocated(error)) return
     ! anonymous expressions cannot be referenced
     call check_parse_error(error, str_list('x + 1', 'b = c'), ['x'], 'undefined variable "c"'); if (allocated(error)) return
     end subroutine test_names
+
+    subroutine check_names_error(error, vars, exprs, names, contains)
+    !! check that parsing with the `names` argument fails with the expected message
+    type(error_type), allocatable, intent(out) :: error
+    character(len=*), dimension(:), intent(in) :: vars, exprs, names
+    character(len=*), intent(in) :: contains
+    type(fparser) :: p
+    integer :: status
+    character(len=:), allocatable :: errmsg
+    call p%parse(vars, exprs, names=names, status=status, errmsg=errmsg)
+    if (status == 0) then
+        call test_failed(error, 'parse should have failed for names: '//names(1))
+    else if (index(errmsg, contains) == 0) then
+        call test_failed(error, 'unexpected error message', 'got "'//errmsg//'", expected "'//contains//'"')
+    end if
+    end subroutine check_names_error
 
     subroutine test_function_errors(error)
     type(error_type), allocatable, intent(out) :: error
