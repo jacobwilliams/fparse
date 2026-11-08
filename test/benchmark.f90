@@ -8,8 +8,11 @@
 !  * [feq-parse](https://github.com/FluidNumerics/feq-parse)
 !  * [M_calculator](https://github.com/urbanjost/M_calculator)
 !
+!  The same calculations written in Python ([test/benchmark.py](../test/benchmark.py))
+!  are also timed, if Python and numpy are available.
+!
 !  Every result is also checked against the native Fortran result, so this
-!  doubles as a test (it fails if any parser gives a wrong answer).
+!  doubles as a test (it fails if fparse gives a wrong answer).
 !
 !  Usage:
 !```
@@ -35,13 +38,15 @@
 
     ! implementations:
     integer, parameter :: i_native = 1
-    integer, parameter :: i_fparse = 2
-    integer, parameter :: i_ffp    = 3
-    integer, parameter :: i_feq    = 4
-    integer, parameter :: i_mcalc  = 5
-    integer, parameter :: n_impl   = 5
+    integer, parameter :: i_python = 2 !! (timed by test/benchmark.py)
+    integer, parameter :: i_fparse = 3
+    integer, parameter :: i_ffp    = 4
+    integer, parameter :: i_feq    = 5
+    integer, parameter :: i_mcalc  = 6
+    integer, parameter :: n_impl   = 6
     character(len=*), dimension(n_impl), parameter :: impl_names = [character(len=50) :: &
-        'Native Fortran', 'fparse', '[fortran_function_parser][ffp]', '[feq-parse][feq]', '[M_calculator][mcalc]']
+        'Native Fortran', 'Python', 'fparse', '[fortran_function_parser][ffp]', '[feq-parse][feq]', &
+        '[M_calculator][mcalc]']
 
     ! benchmark cases:
     integer, parameter :: c_simple  = 1
@@ -92,6 +97,7 @@
     character(len=:), allocatable :: mc_expr
     character(len=200), dimension(n_many) :: many_exprs
     real(wp) :: sink = 0.0_wp !! sum of all checksums (printed, so the compiler can't optimize the loops away)
+    character(len=:), allocatable :: python_version !! the Python and numpy versions (empty if not available)
     character(len=200), dimension(n_many) :: mc_many_exprs !! `many_exprs` in M_calculator syntax
 
     contains
@@ -107,8 +113,9 @@
     logical, dimension(n_impl, n_cases) :: ok !! if the result was correct
     character(len=:), allocatable :: table
     real(wp) :: target_time, cs_native, cs
+    real(wp), dimension(n_cases) :: py_t, py_cs
     integer :: impl, i
-    logical :: update_readme
+    logical :: update_readme, py_ok
     character(len=100) :: arg
 
     update_readme = .false.
@@ -127,12 +134,26 @@
         many_exprs(i) = 'sin(x + '//itoa(i)//')*y + z^2/'//itoa(i)//' - x*'//itoa(i)
     end do
 
+    write(output_unit, '(A)') 'Running: Python'
+    call run_python(target_time, py_t, py_cs, py_ok)
+
     t = -1.0_wp
     ok = .true.
     do icase = 1, n_cases
         write(output_unit, '(A)') 'Running: '//trim(case_names(icase))
         do impl = 1, n_impl
             if (.not. supported(impl, icase)) cycle
+            if (impl == i_python) then
+                if (.not. py_ok) cycle
+                t(impl, icase) = py_t(icase)
+                if (icase /= c_parse) then
+                    call run(i_native, 64, cs_native)
+                    ok(impl, icase) = abs(py_cs(icase) - cs_native) <= 1.0e-9_wp * max(1.0_wp, abs(cs_native))
+                    if (.not. ok(impl, icase)) write(output_unit, '(A,2ES24.15)') &
+                        '  WRONG RESULT for Python: ', py_cs(icase), cs_native
+                end if
+                cycle
+            end if
             call setup(impl)
             ! check the result against the native one:
             if (icase /= c_parse) then
@@ -168,7 +189,7 @@
     case (c_parse)
         supported = impl /= i_native .and. impl /= i_mcalc  ! M_calculator has no separate parse step
     case (c_grad)
-        supported = impl == i_native .or. impl == i_fparse  ! only fparse has derivatives
+        supported = impl == i_native .or. impl == i_python .or. impl == i_fparse  ! only fparse has derivatives
     case default
         supported = .true.
     end select
@@ -596,6 +617,77 @@
 
 !*****************************************************************************************
 !>
+!  Run the Python benchmarks (test/benchmark.py) and read the results.
+!  If Python (or numpy) is not available, `available` is false.
+
+    subroutine run_python(target_time, t, cs, available)
+
+    real(wp), intent(in) :: target_time !! the minimum total time for each case [sec]
+    real(wp), dimension(n_cases), intent(out) :: t !! the time per iteration of each case [sec]
+    real(wp), dimension(n_cases), intent(out) :: cs !! the checksum of 64 iterations of each case
+    logical, intent(out) :: available !! if the results are available
+
+    character(len=*), parameter :: script = 'test/benchmark.py'
+    character(len=*), parameter :: results = 'build/benchmark_python.txt'
+    character(len=*), dimension(2), parameter :: pythons = ['python3', 'python ']
+    character(len=20) :: buf
+    character(len=:), allocatable :: line
+    integer :: i, k, exitstat, cmdstat, iunit, istat, ic
+
+    t = -1.0_wp
+    cs = 0.0_wp
+    available = .false.
+    python_version = ''
+    write(buf, '(ES12.5)') target_time
+    do i = 1, size(pythons)
+        call execute_command_line(trim(pythons(i))//' '//script//' '//trim(adjustl(buf))//' '//results, &
+                                  exitstat=exitstat, cmdstat=cmdstat)
+        if (cmdstat == 0 .and. exitstat == 0) then
+            available = .true.
+            exit
+        end if
+    end do
+    if (.not. available) then
+        write(output_unit, '(A)') '  Python benchmarks not run (Python or numpy is not available)'
+        return
+    end if
+
+    open(newunit=iunit, file=results, status='old', action='read', iostat=istat)
+    if (istat == 0) then
+        call read_line(iunit, line, istat)
+        python_version = line
+        do k = 1, n_cases
+            if (istat == 0) read(iunit, *, iostat=istat) ic, t(k), cs(k)
+            if (istat == 0 .and. ic /= k) istat = -1
+        end do
+        close(iunit, status='delete')
+    end if
+    if (istat /= 0) then
+        write(output_unit, '(A)') '  error reading the Python benchmark results'
+        available = .false.
+        t = -1.0_wp
+        python_version = ''
+    end if
+
+    end subroutine run_python
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  The versions of Python and numpy used, for the notes of the table.
+
+    function python_note() result(s)
+    character(len=:), allocatable :: s !! the note
+    if (len(python_version) > 0) then
+        s = 'Run with '//python_version//'.'
+    else
+        s = 'Python was not available when the table was generated.'
+    end if
+    end function python_note
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
 !  Generate the markdown results table.
 
     function make_table(t, ok) result(table)
@@ -614,7 +706,7 @@
     table = 'Time per evaluation (lower is better). In parentheses: time relative to native Fortran '//&
             '(or relative to fparse for the parse benchmark). "'//sym_dash//'" means not supported, and '//&
             '"wrong result" means the result did not match native Fortran. '//&
-            'Among the parsers (not native Fortran), '//sym_check//' marks the fastest correct result '//&
+            'Among the parsers (not native Fortran or Python), '//sym_check//' marks the fastest correct result '//&
             'in each row and '//sym_cross//' the slowest.'//nl//nl//'| Case |'
     do impl = 1, n_impl
         table = table//' '//trim(impl_names(impl))//' |'
@@ -627,7 +719,7 @@
         islow = 0
         nparsers = 0
         do impl = 1, n_impl
-            if (impl == i_native .or. t(impl, ic) < 0.0_wp) cycle
+            if (impl == i_native .or. impl == i_python .or. t(impl, ic) < 0.0_wp) cycle
             nparsers = nparsers + 1
             if (ok(impl, ic)) then
                 if (ifast == 0) then
@@ -665,9 +757,13 @@
         '* Polynomial: `'//expr_poly//'`'//nl//&
         '* Complex: `'//expr_complex//'`'//nl//&
         '* 100 equations: `sin(x + k)*y + z^2/k - x*k` for `k = 1, 2, ..., 100`'//nl//&
-        '* Vector: the trig expression evaluated at 1000 points (fparse and feq-parse '//&
+        '* Vector: the trig expression evaluated at 1000 points (fparse, feq-parse and Python (numpy) '//&
         'evaluate the whole array at once; the others loop over the points)'//nl//&
-        '* Gradient: the trig expression and its derivatives with respect to `x`, `y` and `z`'//nl//nl//&
+        '* Gradient: the trig expression and its derivatives with respect to `x`, `y` and `z`'//nl//&
+        '* Python: the same calculations written in Python ([test/benchmark.py](test/benchmark.py)), '//&
+        'with the `math` module, and numpy for the vector case. The parse case is `compile()` of the '//&
+        'complex expression. As in the native Fortran column, the gradient is computed with hand-written '//&
+        'derivatives (fparse computes it using automatic differentiation). '//python_note()//nl//nl//&
         'Generated on '//date(1:4)//'-'//date(5:6)//'-'//date(7:8)//' by `pixi run benchmark` ('//&
         '[test/benchmark.f90](test/benchmark.f90)) using '//compiler_version()//' with options `'//&
         optimization_options()//'`.'//nl//nl//&
