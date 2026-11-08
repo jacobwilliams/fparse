@@ -2058,7 +2058,7 @@ subroutine generate_fortran(me, code, module_name, wrt, status, errmsg)
             descriptions(i)%str = me%expressions(i)%str
         end do
         call generate_code(me%trees, me%names, nin, me%order, &
-                           [(size(me%vals(i)%v), i = 1, nin)], iwrt, descriptions, mname, code, me%err)
+                           [(size(me%vals(i)%v), i=1, nin)], iwrt, descriptions, mname, code, me%err)
     end block main
     call finish(me, status, errmsg)
 

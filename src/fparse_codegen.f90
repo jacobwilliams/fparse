@@ -78,12 +78,17 @@ end type codegen_t
 
 ! Fortran names that are used in the generated code (the variables can't have these names):
 character(len=*), dimension(*), parameter :: reserved = [character(len=16) :: &
-    'wp', 'real64', 'iso_fortran_env', 'i', 'j', &
-    'abs', 'sqrt', 'exp', 'log', 'log10', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', &
-    'sinh', 'cosh', 'tanh', 'asinh', 'acosh', 'atanh', 'erf', 'erfc', 'anint', 'aint', &
-    'sind', 'cosd', 'tand', 'asind', 'acosd', 'atand', 'atan2', 'atan2d', 'mod', 'modulo', &
-    'sign', 'hypot', 'max', 'min', 'sum', 'product', 'norm2', 'maxval', 'minval', 'maxloc', &
-    'minloc', 'dot_product', 'matmul', 'merge', 'nint', 'real', 'huge', 'size', 'spread']
+                                                         'wp', 'real64', 'iso_fortran_env', 'i', 'j', &
+                                                         'abs', 'sqrt', 'exp', 'log', 'log10', 'sin', 'cos', 'tan', 'asin', &
+                                                         'acos', 'atan', &
+                                                         'sinh', 'cosh', 'tanh', 'asinh', 'acosh', 'atanh', 'erf', 'erfc', &
+                                                         'anint', 'aint', &
+                                                         'sind', 'cosd', 'tand', 'asind', 'acosd', 'atand', 'atan2', 'atan2d', &
+                                                         'mod', 'modulo', &
+                                                         'sign', 'hypot', 'max', 'min', 'sum', 'product', 'norm2', 'maxval', &
+                                                         'minval', 'maxloc', &
+                                                         'minloc', 'dot_product', 'matmul', 'merge', 'nint', 'real', 'huge', &
+                                                         'size', 'spread']
 
 ! precedence levels of the Fortran expressions that are generated:
 integer, parameter :: prec_add = 6     !! `a + b`, `a - b`, `-a`
@@ -317,12 +322,15 @@ subroutine analyze_tree(g, tree, e)
                     dz(i) = .true.
                 case (fn_dot)
                     if (nsz(arg(1)) /= nsz(arg(2))) call g%err%set('arguments of dot_product have '//&
-                        'different sizes ('//int_to_str(nsz(arg(1)))//' and '//int_to_str(nsz(arg(2)))//')'//loc)
+                                                                   'different sizes ('//int_to_str(nsz(arg(1)))//' and '// &
+                                                                   int_to_str(nsz(arg(2)))//')'//loc)
                     nsz(i) = 1
                     dz(i) = dz(arg(1)) .and. dz(arg(2))
                 case (fn_cross)
                     if (nsz(arg(1)) /= 3 .or. nsz(arg(2)) /= 3) call g%err%set('arguments of cross must '//&
-                        'have size 3 (sizes are '//int_to_str(nsz(arg(1)))//' and '//int_to_str(nsz(arg(2)))//')'//loc)
+                                                                               'have size 3 (sizes are '// &
+                                                                               int_to_str(nsz(arg(1)))//' and '// &
+                                                                               int_to_str(nsz(arg(2)))//')'//loc)
                     nsz(i) = 3
                     dz(i) = dz(arg(1)) .and. dz(arg(2))
                 case (fn_if)
@@ -331,7 +339,7 @@ subroutine analyze_tree(g, tree, e)
                     nb = nsz(arg(2))
                     if (c == 1) then
                         if (na /= nb) call g%err%set('the values of "if" must have the same size for code '//&
-                            'generation (sizes are '//int_to_str(na)//' and '//int_to_str(nb)//')'//loc)
+                                                     'generation (sizes are '//int_to_str(na)//' and '//int_to_str(nb)//')'//loc)
                         nsz(i) = na
                     else
                         if ((na /= 1 .and. na /= c) .or. (nb /= 1 .and. nb /= c)) call g%err%set(&
@@ -901,7 +909,7 @@ subroutine jacobian_node(g, tree, info, i, vb, db)
                 if (info%nsz(a) == 1) then
                     call statement(g, v//' = '//vb(a)%str//'*'//vb(b)%str)
                     if (len(d) > 0) call statement(g, d//' = '//sum_terms([term(vb(b)%str, db(a)%str), &
-                                                                         term(vb(a)%str, db(b)%str)]))
+                                                                           term(vb(a)%str, db(b)%str)]))
                 else
                     call statement(g, v//' = dot_product('//vb(a)%str//', '//vb(b)%str//')')
                     if (len(d) > 0) call statement(g, d//' = '//sum_terms([ &
