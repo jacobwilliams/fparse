@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>fparse</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8a63b3"/>
+      <stop offset="1" stop-color="#5c3f7a"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="95" ry="95" fill="url(#bg)"/>
+  <text x="256" y="236" text-anchor="middle" fill="#ffffff"
+        font-family="Menlo, Consolas, 'DejaVu Sans Mono', 'Courier New', monospace"
+        font-size="150" font-weight="bold">f(x)</text>
+  <g stroke="#cbb6e6" stroke-width="9" stroke-linecap="round">
+    <line x1="276" y1="318" x2="196" y2="378"/>
+    <line x1="276" y1="318" x2="356" y2="378"/>
+    <line x1="196" y1="378" x2="156" y2="436"/>
+    <line x1="196" y1="378" x2="236" y2="436"/>
+  </g>
+  <g>
+    <circle cx="276" cy="318" r="19" fill="#ffb547"/>
+    <circle cx="196" cy="378" r="19" fill="#ffb547"/>
+    <circle cx="356" cy="378" r="14" fill="#ffffff"/>
+    <circle cx="156" cy="436" r="14" fill="#ffffff"/>
+    <circle cx="236" cy="436" r="14" fill="#ffffff"/>
+  </g>
+</svg>

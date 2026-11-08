@@ -46,6 +46,8 @@ graph = true
 sort = "alpha"
 search = true
 front_page_file = "README.md"
+logo = "./media/logo.svg"
+media_dir = ["./media"]
 
 [extra.fortitude.check]
 select = ["C", "E", "S"]
