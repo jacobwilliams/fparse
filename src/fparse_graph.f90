@@ -191,7 +191,7 @@ subroutine write_dot(g, b)
     end do
     do i = 1, size(g%edges, 2)
         call add(b, '  '//dot_str(node_id(g%nodes(g%edges(1, i))))//' -> '//&
-                    dot_str(node_id(g%nodes(g%edges(2, i))))//';'//nl)
+                 dot_str(node_id(g%nodes(g%edges(2, i))))//';'//nl)
     end do
     call add(b, '}'//nl)
 
@@ -218,7 +218,7 @@ subroutine write_json(g, b)
         associate (node => g%nodes(i))
             if (i > 1) call add(b, ',')
             call add(b, nl//'    {"id": '//json_str(node_id(node))//', "kind": '//json_str(kind_name(node))//&
-                        ', "index": '//int_to_str(node%index)//', "name": '//json_str(node%name))
+                     ', "index": '//int_to_str(node%index)//', "name": '//json_str(node%name))
             if (node%kind == node_output) then
                 call add(b, ', "expression": '//json_str(node%expression)//', "order": '//int_to_str(node%order))
             end if
@@ -230,7 +230,7 @@ subroutine write_json(g, b)
     do i = 1, size(g%edges, 2)
         if (i > 1) call add(b, ',')
         call add(b, nl//'    {"source": '//json_str(node_id(g%nodes(g%edges(1, i))))//&
-                    ', "target": '//json_str(node_id(g%nodes(g%edges(2, i))))//'}')
+                 ', "target": '//json_str(node_id(g%nodes(g%edges(2, i))))//'}')
     end do
     call add(b, nl//'  ]'//nl)
     call add(b, '}'//nl)
@@ -272,7 +272,7 @@ subroutine write_graphml(g, b)
     end do
     do i = 1, size(g%edges, 2)
         call add(b, '    <edge source="'//xml_str(node_id(g%nodes(g%edges(1, i))))//&
-                    '" target="'//xml_str(node_id(g%nodes(g%edges(2, i))))//'"/>'//nl)
+                 '" target="'//xml_str(node_id(g%nodes(g%edges(2, i))))//'"/>'//nl)
     end do
     call add(b, '  </graph>'//nl)
     call add(b, '</graphml>'//nl)

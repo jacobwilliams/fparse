@@ -1787,7 +1787,7 @@ subroutine get_dependents(me, name, outputs, indirect, status, errmsg)
     if (check_parsed(me)) then
         idx = find_output(me, name)
         if (.not. me%err%failed) then
-            outputs = pack([(i, i = 1, me%n_outputs)], variable_dependents(me, idx, opt_false(indirect)))
+            outputs = pack([(i, i=1, me%n_outputs)], variable_dependents(me, idx, opt_false(indirect)))
         end if
     end if
     call finish(me, status, errmsg)
@@ -1907,7 +1907,7 @@ subroutine export_dependencies(me, format, str, status, errmsg)
             e = me%order(k)
             g%nodes(nin + e) = graph_node(node_output, e, me%names(nin + e)%str, me%rhs(e)%str, k)
         end do
-        nedges = sum([(size(me%trees(e)%refs), e = 1, me%n_outputs)])
+        nedges = sum([(size(me%trees(e)%refs), e=1, me%n_outputs)])
         allocate(g%edges(2, nedges))
         i = 0
         do e = 1, me%n_outputs
@@ -2008,8 +2008,8 @@ subroutine split_variables(me, vars, inputs, outputs)
     integer :: i, nin
 
     nin = me%n_inputs
-    inputs = pack([(i, i = 1, nin)], vars(1:nin))
-    outputs = pack([(i, i = 1, me%n_outputs)], vars(nin+1:))
+    inputs = pack([(i, i=1, nin)], vars(1:nin))
+    outputs = pack([(i, i=1, me%n_outputs)], vars(nin+1:))
 
 end subroutine split_variables
 !*****************************************************************************************

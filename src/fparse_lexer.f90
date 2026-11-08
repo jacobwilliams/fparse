@@ -230,8 +230,10 @@ subroutine lex_number(str, i, j, val, ok)
 
     ! exact powers of ten (all are exactly representable):
     real(wp), dimension(0:22), parameter :: pow10 = [1.0e0_wp, 1.0e1_wp, 1.0e2_wp, 1.0e3_wp, 1.0e4_wp, &
-        1.0e5_wp, 1.0e6_wp, 1.0e7_wp, 1.0e8_wp, 1.0e9_wp, 1.0e10_wp, 1.0e11_wp, 1.0e12_wp, 1.0e13_wp, &
-        1.0e14_wp, 1.0e15_wp, 1.0e16_wp, 1.0e17_wp, 1.0e18_wp, 1.0e19_wp, 1.0e20_wp, 1.0e21_wp, 1.0e22_wp]
+                                                     1.0e5_wp, 1.0e6_wp, 1.0e7_wp, 1.0e8_wp, 1.0e9_wp, 1.0e10_wp, 1.0e11_wp, &
+                                                     1.0e12_wp, 1.0e13_wp, &
+                                                     1.0e14_wp, 1.0e15_wp, 1.0e16_wp, 1.0e17_wp, 1.0e18_wp, 1.0e19_wp, 1.0e20_wp, &
+                                                     1.0e21_wp, 1.0e22_wp]
 
     n = len(str)
     k = i                ! next character to examine
