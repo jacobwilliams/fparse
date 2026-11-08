@@ -60,6 +60,7 @@
         new_unittest("big_vectors", test_big_vectors), &
         new_unittest("many_variables", test_many_variables), &
         new_unittest("large_systems", test_large_systems), &
+        new_unittest("random_systems", test_random_systems), &
         new_unittest("names", test_names), &
         new_unittest("exact_derivatives", test_exact_derivatives), &
         new_unittest("fd_derivatives", test_fd_derivatives), &
@@ -722,6 +723,66 @@
     call p%get('s', r)
     call check(error, abs(r - sum([(sin(i*xv), i = 1, n - 1)])) < 1.0e-12_wp, 'sum of the outputs'); if (allocated(error)) return
     end subroutine test_large_systems
+
+    subroutine test_random_systems(error)
+    !! the evaluation order of random systems of expressions (listed in a random
+    !! order) must be the one given by repeatedly sweeping through the expressions
+    !! in index order, adding each one whose dependencies have all been added
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
+    integer, parameter :: n = 60 !! number of expressions in each system
+    type(fparser) :: p
+    character(len=100), dimension(n) :: exprs
+    integer, dimension(n) :: perm, expected
+    integer, dimension(:), allocatable :: order, inputs, outputs
+    logical, dimension(n) :: done
+    integer :: isys, i, j, k, m, tmp, ne
+    integer(int64) :: seed
+    seed = 271828
+    do isys = 1, 20
+        ! a random permutation (the position of each expression in the list):
+        perm = [(i, i = 1, n)]
+        do i = n, 2, -1
+            j = next(1, i)
+            tmp = perm(i); perm(i) = perm(j); perm(j) = tmp
+        end do
+        ! e(k) depends on up to 3 random expressions e(j) with j < k (so there are no cycles):
+        do k = 1, n
+            exprs(perm(k)) = 'e'//itoa(k)//' = x'
+            if (k > 1) then
+                do m = 1, next(0, 3)
+                    exprs(perm(k)) = trim(exprs(perm(k)))//' + e'//itoa(next(1, k-1))
+                end do
+            end if
+        end do
+        call p%parse(['x'], exprs)
+        call check(error, .not. p%failed(), p%error_message()); if (allocated(error)) return
+        ! the expected order (sweeps):
+        done = .false.
+        ne = 0
+        do while (ne < n)
+            do i = 1, n
+                if (done(i)) cycle
+                call p%get_dependencies(i, inputs, outputs)
+                if (all(done(outputs))) then
+                    done(i) = .true.
+                    ne = ne + 1
+                    expected(ne) = i
+                end if
+            end do
+        end do
+        order = p%evaluation_order()
+        call check(error, all(order == expected), 'evaluation order of system '//itoa(isys))
+        if (allocated(error)) return
+    end do
+    contains
+        integer function next(lo, hi)
+        !! a pseudo-random integer in `[lo, hi]` (a linear congruential generator)
+        integer, intent(in) :: lo !! the lower bound
+        integer, intent(in) :: hi !! the upper bound
+        seed = mod(1103515245_int64 * seed + 12345_int64, 2147483648_int64)
+        next = lo + int(mod(seed / 65536_int64, int(hi - lo + 1, int64)))
+        end function next
+    end subroutine test_random_systems
 
     subroutine test_names(error)
     !! unusual variable names

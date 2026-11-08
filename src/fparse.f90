@@ -62,6 +62,7 @@ use fparse_common
 use fparse_eval
 use fparse_functions
 use fparse_graph
+use fparse_hash
 use fparse_parser
 
 implicit none (type, external)
@@ -103,6 +104,7 @@ type, public :: fparser
     integer :: n_outputs = 0 !! number of expressions
     type(string_t), dimension(:), allocatable :: names !! all variable names (inputs, then outputs).
                                                         !! Anonymous outputs have empty names.
+    type(name_table) :: table !! hash table for looking up `names`
     type(string_t), dimension(:), allocatable :: expressions !! the expression strings
     type(string_t), dimension(:), allocatable :: rhs !! the expressions, without the output names
     type(expr_tree), dimension(:), allocatable :: trees !! the parsed expressions
@@ -459,6 +461,7 @@ subroutine parse(me, variables, expressions, names, status, errmsg)
     me%n_inputs = nin
     me%n_outputs = nout
     allocate(me%names(nin + nout), me%expressions(nout), me%rhs(nout), rhs_list(nout), offsets(nout))
+    call me%table%init(nin + nout)
 
     main: block
 
@@ -482,6 +485,7 @@ subroutine parse(me, variables, expressions, names, status, errmsg)
                 exit main
             end if
             me%names(i)%str = name
+            call me%table%insert(me%names, i)
         end do
 
         ! output names:
@@ -505,6 +509,7 @@ subroutine parse(me, variables, expressions, names, status, errmsg)
                 end if
             end if
             me%names(nin + i)%str = name
+            if (len(name) > 0) call me%table%insert(me%names, nin + i)
             rhs_list(i)%str = rhs
             me%rhs(i)%str = trim(adjustl(rhs))
             offsets(i) = offset
@@ -513,7 +518,7 @@ subroutine parse(me, variables, expressions, names, status, errmsg)
         ! parse the expressions:
         allocate(me%trees(nout))
         do i = 1, nout
-            call parse_expression(rhs_list(i)%str, me%names, me%funcs, me%trees(i), perr)
+            call parse_expression(rhs_list(i)%str, me%names, me%table, me%funcs, me%trees(i), perr)
             if (perr%failed) then
                 call me%err%set('error parsing expression '//int_to_str(i)//' "'//&
                                 me%expressions(i)%str//'": '//perr%message//&
@@ -595,52 +600,108 @@ end subroutine split_assignment
 !  Determine the order to evaluate the expressions, based on their
 !  dependencies on the outputs of the other expressions.
 !  Raises an error if there is a circular dependency.
+!
+!  The order is the same as that of repeatedly sweeping through the expressions
+!  in index order, adding each one whose dependencies have all been added. This is
+!  computed in linear time: each expression gets the number of the sweep in which
+!  it would be added, which is 1 if it has no dependencies, and otherwise the
+!  largest over its dependencies `d` of the sweep of `d` (plus one if `d` comes
+!  after it). The expressions are then sorted by sweep, and by index within a sweep.
 
 subroutine sort_expressions(me)
 
     class(fparser), intent(inout) :: me !! the parser
 
-    logical, dimension(:), allocatable :: done
-    logical :: ready, progress
-    integer :: i, j, k, n, nin
+    integer, dimension(:), allocatable :: ndeps, first, dependents, fill, topo, sweep, count
+    integer :: i, j, k, e, n, nin, nt, nedges, maxsweep
     character(len=:), allocatable :: msg
 
     nin = me%n_inputs
     n = me%n_outputs
-    allocate(me%order(0), done(n))
-    done = .false.
 
-    do while (size(me%order) < n)
-        progress = .false.
-        do i = 1, n
-            if (done(i)) cycle
-            ready = .true.
-            do k = 1, size(me%trees(i)%refs)
-                j = me%trees(i)%refs(k) - nin
-                if (j > 0) then
-                    if (.not. done(j)) then
-                        ready = .false.
-                        exit
-                    end if
-                end if
-            end do
-            if (ready) then
-                done(i) = .true.
-                me%order = [me%order, i]
-                progress = .true.
+    ! the dependents of each expression (`dependents(first(j):first(j+1)-1)` depend on `j`):
+    allocate(ndeps(n), source=0)
+    allocate(first(n+1), source=0)
+    do i = 1, n
+        do k = 1, size(me%trees(i)%refs)
+            j = me%trees(i)%refs(k) - nin
+            if (j > 0) then
+                ndeps(i) = ndeps(i) + 1
+                first(j+1) = first(j+1) + 1
             end if
         end do
-        if (.not. progress) then
-            msg = ''
-            do i = 1, n
-                if (.not. done(i)) then
-                    if (len(msg) > 0) msg = msg//', '
-                    msg = msg//me%names(nin + i)%str
-                end if
-            end do
-            call me%err%set('circular dependency between expressions: '//msg)
-            return
+    end do
+    first(1) = 1
+    do j = 1, n
+        first(j+1) = first(j+1) + first(j)
+    end do
+    nedges = first(n+1) - 1
+    allocate(dependents(nedges), fill(n))
+    fill = first(1:n)
+    do i = 1, n
+        do k = 1, size(me%trees(i)%refs)
+            j = me%trees(i)%refs(k) - nin
+            if (j > 0) then
+                dependents(fill(j)) = i
+                fill(j) = fill(j) + 1
+            end if
+        end do
+    end do
+
+    ! a topological order (Kahn's algorithm), and the sweep of each expression:
+    allocate(topo(n), sweep(n))
+    sweep = 1
+    nt = 0
+    do i = 1, n
+        if (ndeps(i) == 0) then
+            nt = nt + 1
+            topo(nt) = i
         end if
+    end do
+    k = 0
+    do while (k < nt)
+        k = k + 1
+        j = topo(k)
+        do i = first(j), first(j+1) - 1
+            e = dependents(i)
+            sweep(e) = max(sweep(e), sweep(j) + merge(1, 0, j > e))
+            ndeps(e) = ndeps(e) - 1
+            if (ndeps(e) == 0) then
+                nt = nt + 1
+                topo(nt) = e
+            end if
+        end do
+    end do
+
+    if (nt < n) then
+        ! the remaining expressions are in (or depend on) a cycle:
+        msg = ''
+        do i = 1, n
+            if (ndeps(i) > 0) then
+                if (len(msg) > 0) msg = msg//', '
+                msg = msg//me%names(nin + i)%str
+            end if
+        end do
+        call me%err%set('circular dependency between expressions: '//msg)
+        allocate(me%order(0))
+        return
+    end if
+
+    ! sort by sweep, then by index (a counting sort):
+    maxsweep = 0
+    if (n > 0) maxsweep = maxval(sweep)
+    allocate(count(maxsweep+1), source=0)
+    do i = 1, n
+        count(sweep(i)+1) = count(sweep(i)+1) + 1
+    end do
+    count(1) = 1
+    do k = 2, maxsweep + 1
+        count(k) = count(k) + count(k-1)
+    end do
+    allocate(me%order(n))
+    do i = 1, n
+        me%order(count(sweep(i))) = i
+        count(sweep(i)) = count(sweep(i)) + 1
     end do
 
 end subroutine sort_expressions
@@ -657,20 +718,13 @@ pure integer function find_variable(me, name, n) result(idx)
     character(len=*), intent(in) :: name !! lowercase name
     integer, intent(in), optional :: n !! number of names to search
 
-    integer :: i, nmax
-
     idx = 0
     if (.not. allocated(me%names) .or. len(name) == 0) return
-    nmax = size(me%names)
-    if (present(n)) nmax = min(n, nmax)
-    do i = 1, nmax
-        if (allocated(me%names(i)%str)) then
-            if (me%names(i)%str == name) then
-                idx = i
-                return
-            end if
-        end if
-    end do
+    idx = me%table%find(me%names, name)
+    ! (the names are unique, so this is the only match)
+    if (present(n)) then
+        if (idx > n) idx = 0
+    end if
 
 end function find_variable
 !*****************************************************************************************

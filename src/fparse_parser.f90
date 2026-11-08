@@ -28,6 +28,7 @@ module fparse_parser
 
 use fparse_common
 use fparse_functions
+use fparse_hash
 use fparse_lexer
 
 implicit none (type, external)
@@ -104,6 +105,7 @@ type :: parser_t
     type(error_t) :: err !! error status
     character(len=:), pointer :: str => null() !! the expression
     type(string_t), dimension(:), pointer :: vars => null() !! variable names
+    type(name_table), pointer :: table => null() !! hash table for looking up `vars`
     type(user_function), dimension(:), pointer :: funcs => null() !! user functions
 end type parser_t
 
@@ -116,10 +118,11 @@ contains
 !>
 !  Parse an expression string into an expression tree.
 
-subroutine parse_expression(str, vars, funcs, tree, err)
+subroutine parse_expression(str, vars, table, funcs, tree, err)
 
     character(len=*), intent(in), target :: str !! the expression
     type(string_t), dimension(:), intent(in), target :: vars !! the variable names (lowercase)
+    type(name_table), intent(in), target :: table !! hash table for looking up `vars`
     type(user_function), dimension(:), intent(in), target :: funcs !! user-defined functions
     type(expr_tree), intent(out) :: tree !! the expression tree
     type(error_t), intent(inout) :: err !! error status
@@ -135,6 +138,7 @@ subroutine parse_expression(str, vars, funcs, tree, err)
     ! (the pointers are only used during this call)
     p%str => str
     p%vars => vars
+    p%table => table
     p%funcs => funcs
     allocate(p%tree%nodes(16), p%tree%args(16))
     allocate(p%tree%refs(0))
@@ -645,15 +649,12 @@ recursive function parse_primary(p) result(n)
 
         else
             ! variable or constant
-            do k = 1, size(p%vars)
-                if (p%vars(k)%str == name) then
-                    n = add_node(p, node_var, k, [integer :: ], pos)
-                    if (.not. any(p%tree%refs == k)) p%tree%refs = [p%tree%refs, k]
-                    p%tree%nodes(n)%iref = findloc(p%tree%refs, k, dim=1)
-                    return
-                end if
-            end do
-            if (name == 'pi') then
+            k = p%table%find(p%vars, name)
+            if (k > 0) then
+                n = add_node(p, node_var, k, [integer :: ], pos)
+                if (.not. any(p%tree%refs == k)) p%tree%refs = [p%tree%refs, k]
+                p%tree%nodes(n)%iref = findloc(p%tree%refs, k, dim=1)
+            else if (name == 'pi') then
                 n = add_node(p, node_const, 0, [integer :: ], pos, acos(-1.0_wp))
             else
                 call p%err%set('undefined variable "'//name//'"', pos)
