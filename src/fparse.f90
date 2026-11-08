@@ -54,6 +54,11 @@
 !  ([[fparser:get_dependencies]], [[fparser:get_dependents]], [[fparser:depends_on]],
 !  [[fparser:dependency_matrix]]), and the dependency graph can be exported for other
 !  tools (Graphviz DOT, JSON, GraphML or Mermaid) using [[fparser:export_dependencies]].
+!
+!### Code generation
+!
+!  [[fparser:generate_fortran]] generates a standalone Fortran module that computes
+!  the expressions (and optionally their jacobians). See [[fparse_codegen]].
 
 module fparse
 
@@ -61,6 +66,7 @@ use fparse_bytecode
 use fparse_common
 use fparse_eval
 use fparse_functions
+use fparse_codegen
 use fparse_graph
 use fparse_hash
 use fparse_parser
@@ -165,6 +171,7 @@ contains
     procedure, public :: depends_on
     procedure, public :: dependency_matrix
     procedure, public :: export_dependencies
+    procedure, public :: generate_fortran
     procedure, public :: set_domain_checking
     procedure, public :: set_scalar_optimization
     procedure, public :: set_sparsity
@@ -1977,6 +1984,85 @@ subroutine export_dependencies(me, format, str, status, errmsg)
     call finish(me, status, errmsg)
 
 end subroutine export_dependencies
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Generate Fortran source code for the expressions: a module (with no dependencies)
+!  containing the subroutines `<module_name>_eval`, which computes the outputs, and
+!  (if `wrt` is present) `<module_name>_jac`, which also computes the jacobians of the
+!  outputs with respect to the `wrt` input variables.
+!
+!  The arguments of the subroutines are the input variables, then the outputs (and for
+!  `_jac`, then the jacobian of each output, `d_<name>`). The jacobian of a scalar output
+!  is a vector, and that of a vector output is a matrix with one row for each element;
+!  the columns are the elements of the `wrt` variables, in order. Anonymous outputs are
+!  named `out<k>`, and names that would clash with Fortran intrinsics (or the generated
+!  names) get an underscore appended. A comment at the top of the module lists the
+!  arguments.
+!
+!  The code is specialized for the current sizes of the input variables, so all the
+!  inputs must have been set: scalars become `real(wp)` arguments, and vectors become
+!  arrays of the same size. Expressions with user-defined functions are not supported.
+!  The generated code does not check for domain errors (which give NaN or infinity,
+!  as in plain Fortran) or that indices are within bounds.
+
+subroutine generate_fortran(me, code, module_name, wrt, status, errmsg)
+
+    class(fparser), intent(inout) :: me !! the parser
+    character(len=:), allocatable, intent(out) :: code !! the generated Fortran code
+    character(len=*), intent(in), optional :: module_name !! the name of the module
+                                                          !! (default `fparse_generated`)
+    character(len=*), dimension(:), intent(in), optional :: wrt !! names of the input variables to
+                                                                !! differentiate with respect to
+    integer, intent(out), optional :: status !! status code (0 if no errors)
+    character(len=:), allocatable, intent(out), optional :: errmsg !! error message (if any)
+
+    integer, dimension(:), allocatable :: iwrt
+    type(string_t), dimension(:), allocatable :: descriptions
+    character(len=:), allocatable :: mname
+    integer :: i, k, idx, nin
+
+    if (me%err%failed) call me%err%clear()
+    code = ''
+    main: block
+        if (.not. check_parsed(me)) exit main
+        nin = me%n_inputs
+        do i = 1, nin
+            if (.not. me%is_set(i)) then
+                call me%err%set('the value of the input variable "'//me%names(i)%str//&
+                                '" has not been set (the sizes of the inputs are needed)')
+                exit main
+            end if
+        end do
+        allocate(iwrt(0))
+        if (present(wrt)) then
+            do k = 1, size(wrt)
+                idx = find_variable(me, to_lower(trim(adjustl(wrt(k)))), nin)
+                if (idx == 0) then
+                    call me%err%set('cannot compute derivative with respect to "'//trim(wrt(k))//&
+                                    '": not an input variable')
+                    exit main
+                end if
+                if (any(iwrt == idx)) then
+                    call me%err%set('duplicate derivative variable "'//trim(wrt(k))//'"')
+                    exit main
+                end if
+                iwrt = [iwrt, idx]
+            end do
+        end if
+        mname = 'fparse_generated'
+        if (present(module_name)) mname = to_lower(trim(adjustl(module_name)))
+        allocate(descriptions(me%n_outputs))
+        do i = 1, me%n_outputs
+            descriptions(i)%str = me%expressions(i)%str
+        end do
+        call generate_code(me%trees, me%names, nin, me%order, &
+                           [(size(me%vals(i)%v), i = 1, nin)], iwrt, descriptions, mname, code, me%err)
+    end block main
+    call finish(me, status, errmsg)
+
+end subroutine generate_fortran
 !*****************************************************************************************
 
 !*****************************************************************************************

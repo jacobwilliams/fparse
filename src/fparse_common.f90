@@ -38,6 +38,15 @@ contains
     procedure :: clear => error_clear
 end type error_t
 
+type, public :: string_builder
+    !! A string that grows efficiently as text is appended.
+    character(len=:), allocatable :: buf !! the buffer
+    integer :: n = 0 !! the length of the string in the buffer
+contains
+    procedure, public :: add => string_builder_add
+    procedure, public :: get => string_builder_get
+end type string_builder
+
 public :: to_lower
 public :: int_to_str
 public :: is_valid_name
@@ -143,6 +152,47 @@ pure logical function is_valid_name(str)
     is_valid_name = .true.
 
 end function is_valid_name
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Append text to a string builder.
+
+pure subroutine string_builder_add(me, s)
+
+    class(string_builder), intent(inout) :: me !! the string builder
+    character(len=*), intent(in) :: s !! the text to append
+
+    character(len=:), allocatable :: tmp
+
+    if (.not. allocated(me%buf)) allocate(character(len=max(1024, 2*len(s))) :: me%buf)
+    if (me%n + len(s) > len(me%buf)) then
+        allocate(character(len=max(2*len(me%buf), me%n + len(s))) :: tmp)
+        tmp(1:me%n) = me%buf(1:me%n)
+        call move_alloc(tmp, me%buf)
+    end if
+    me%buf(me%n+1:me%n+len(s)) = s
+    me%n = me%n + len(s)
+
+end subroutine string_builder_add
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  The contents of a string builder.
+
+pure function string_builder_get(me) result(s)
+
+    class(string_builder), intent(in) :: me !! the string builder
+    character(len=:), allocatable :: s !! the text
+
+    if (allocated(me%buf)) then
+        s = me%buf(1:me%n)
+    else
+        s = ''
+    end if
+
+end function string_builder_get
 !*****************************************************************************************
 
 !*****************************************************************************************

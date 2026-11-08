@@ -46,12 +46,6 @@ type, public :: dependency_graph
                                                   !! with shape `[2, number of edges]`
 end type dependency_graph
 
-type :: string_builder
-    !! A string that grows efficiently as text is appended.
-    character(len=:), allocatable :: buf !! the buffer
-    integer :: n = 0 !! the length of the string in the buffer
-end type string_builder
-
 public :: export_graph
 
 contains
@@ -176,24 +170,24 @@ subroutine write_dot(g, b)
 
     integer :: i
 
-    call add(b, 'digraph dependencies {'//nl)
-    call add(b, '  rankdir=LR;'//nl)
+    call b%add('digraph dependencies {'//nl)
+    call b%add('  rankdir=LR;'//nl)
     do i = 1, size(g%nodes)
         associate (node => g%nodes(i))
-            call add(b, '  '//dot_str(node_id(node))//' [label='//dot_str(node_label(node)))
+            call b%add('  '//dot_str(node_id(node))//' [label='//dot_str(node_label(node)))
             if (node%kind == node_input) then
-                call add(b, ', shape=ellipse')
+                call b%add(', shape=ellipse')
             else
-                call add(b, ', shape=box')
+                call b%add(', shape=box')
             end if
-            call add(b, ', class='//dot_str(kind_name(node))//', tooltip='//dot_str(node_description(node))//'];'//nl)
+            call b%add(', class='//dot_str(kind_name(node))//', tooltip='//dot_str(node_description(node))//'];'//nl)
         end associate
     end do
     do i = 1, size(g%edges, 2)
-        call add(b, '  '//dot_str(node_id(g%nodes(g%edges(1, i))))//' -> '//&
+        call b%add('  '//dot_str(node_id(g%nodes(g%edges(1, i))))//' -> '//&
                  dot_str(node_id(g%nodes(g%edges(2, i))))//';'//nl)
     end do
-    call add(b, '}'//nl)
+    call b%add('}'//nl)
 
 end subroutine write_dot
 !*****************************************************************************************
@@ -209,31 +203,31 @@ subroutine write_json(g, b)
 
     integer :: i
 
-    call add(b, '{'//nl)
-    call add(b, '  "directed": true,'//nl)
-    call add(b, '  "multigraph": false,'//nl)
-    call add(b, '  "graph": {"name": "dependencies"},'//nl)
-    call add(b, '  "nodes": [')
+    call b%add('{'//nl)
+    call b%add('  "directed": true,'//nl)
+    call b%add('  "multigraph": false,'//nl)
+    call b%add('  "graph": {"name": "dependencies"},'//nl)
+    call b%add('  "nodes": [')
     do i = 1, size(g%nodes)
         associate (node => g%nodes(i))
-            if (i > 1) call add(b, ',')
-            call add(b, nl//'    {"id": '//json_str(node_id(node))//', "kind": '//json_str(kind_name(node))//&
+            if (i > 1) call b%add(',')
+            call b%add(nl//'    {"id": '//json_str(node_id(node))//', "kind": '//json_str(kind_name(node))//&
                      ', "index": '//int_to_str(node%index)//', "name": '//json_str(node%name))
             if (node%kind == node_output) then
-                call add(b, ', "expression": '//json_str(node%expression)//', "order": '//int_to_str(node%order))
+                call b%add(', "expression": '//json_str(node%expression)//', "order": '//int_to_str(node%order))
             end if
-            call add(b, '}')
+            call b%add('}')
         end associate
     end do
-    call add(b, nl//'  ],'//nl)
-    call add(b, '  "links": [')
+    call b%add(nl//'  ],'//nl)
+    call b%add('  "links": [')
     do i = 1, size(g%edges, 2)
-        if (i > 1) call add(b, ',')
-        call add(b, nl//'    {"source": '//json_str(node_id(g%nodes(g%edges(1, i))))//&
+        if (i > 1) call b%add(',')
+        call b%add(nl//'    {"source": '//json_str(node_id(g%nodes(g%edges(1, i))))//&
                  ', "target": '//json_str(node_id(g%nodes(g%edges(2, i))))//'}')
     end do
-    call add(b, nl//'  ]'//nl)
-    call add(b, '}'//nl)
+    call b%add(nl//'  ]'//nl)
+    call b%add('}'//nl)
 
 end subroutine write_json
 !*****************************************************************************************
@@ -249,33 +243,33 @@ subroutine write_graphml(g, b)
 
     integer :: i
 
-    call add(b, '<?xml version="1.0" encoding="UTF-8"?>'//nl)
-    call add(b, '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">'//nl)
-    call add(b, '  <key id="kind" for="node" attr.name="kind" attr.type="string"/>'//nl)
-    call add(b, '  <key id="index" for="node" attr.name="index" attr.type="int"/>'//nl)
-    call add(b, '  <key id="name" for="node" attr.name="name" attr.type="string"/>'//nl)
-    call add(b, '  <key id="expression" for="node" attr.name="expression" attr.type="string"/>'//nl)
-    call add(b, '  <key id="order" for="node" attr.name="order" attr.type="int"/>'//nl)
-    call add(b, '  <graph id="dependencies" edgedefault="directed">'//nl)
+    call b%add('<?xml version="1.0" encoding="UTF-8"?>'//nl)
+    call b%add('<graphml xmlns="http://graphml.graphdrawing.org/xmlns">'//nl)
+    call b%add('  <key id="kind" for="node" attr.name="kind" attr.type="string"/>'//nl)
+    call b%add('  <key id="index" for="node" attr.name="index" attr.type="int"/>'//nl)
+    call b%add('  <key id="name" for="node" attr.name="name" attr.type="string"/>'//nl)
+    call b%add('  <key id="expression" for="node" attr.name="expression" attr.type="string"/>'//nl)
+    call b%add('  <key id="order" for="node" attr.name="order" attr.type="int"/>'//nl)
+    call b%add('  <graph id="dependencies" edgedefault="directed">'//nl)
     do i = 1, size(g%nodes)
         associate (node => g%nodes(i))
-            call add(b, '    <node id="'//xml_str(node_id(node))//'">')
-            call add(b, '<data key="kind">'//kind_name(node)//'</data>')
-            call add(b, '<data key="index">'//int_to_str(node%index)//'</data>')
-            call add(b, '<data key="name">'//xml_str(node%name)//'</data>')
+            call b%add('    <node id="'//xml_str(node_id(node))//'">')
+            call b%add('<data key="kind">'//kind_name(node)//'</data>')
+            call b%add('<data key="index">'//int_to_str(node%index)//'</data>')
+            call b%add('<data key="name">'//xml_str(node%name)//'</data>')
             if (node%kind == node_output) then
-                call add(b, '<data key="expression">'//xml_str(node%expression)//'</data>')
-                call add(b, '<data key="order">'//int_to_str(node%order)//'</data>')
+                call b%add('<data key="expression">'//xml_str(node%expression)//'</data>')
+                call b%add('<data key="order">'//int_to_str(node%order)//'</data>')
             end if
-            call add(b, '</node>'//nl)
+            call b%add('</node>'//nl)
         end associate
     end do
     do i = 1, size(g%edges, 2)
-        call add(b, '    <edge source="'//xml_str(node_id(g%nodes(g%edges(1, i))))//&
+        call b%add('    <edge source="'//xml_str(node_id(g%nodes(g%edges(1, i))))//&
                  '" target="'//xml_str(node_id(g%nodes(g%edges(2, i))))//'"/>'//nl)
     end do
-    call add(b, '  </graph>'//nl)
-    call add(b, '</graphml>'//nl)
+    call b%add('  </graph>'//nl)
+    call b%add('</graphml>'//nl)
 
 end subroutine write_graphml
 !*****************************************************************************************
@@ -292,18 +286,18 @@ subroutine write_mermaid(g, b)
 
     integer :: i
 
-    call add(b, 'flowchart LR'//nl)
+    call b%add('flowchart LR'//nl)
     do i = 1, size(g%nodes)
         associate (node => g%nodes(i))
             if (node%kind == node_input) then
-                call add(b, '  v'//int_to_str(i)//'(["'//mermaid_str(node_label(node))//'"])'//nl)
+                call b%add('  v'//int_to_str(i)//'(["'//mermaid_str(node_label(node))//'"])'//nl)
             else
-                call add(b, '  v'//int_to_str(i)//'["'//mermaid_str(node_label(node))//'"]'//nl)
+                call b%add('  v'//int_to_str(i)//'["'//mermaid_str(node_label(node))//'"]'//nl)
             end if
         end associate
     end do
     do i = 1, size(g%edges, 2)
-        call add(b, '  v'//int_to_str(g%edges(1, i))//' --> v'//int_to_str(g%edges(2, i))//nl)
+        call b%add('  v'//int_to_str(g%edges(1, i))//' --> v'//int_to_str(g%edges(2, i))//nl)
     end do
 
 end subroutine write_mermaid
@@ -412,29 +406,6 @@ pure function mermaid_str(s) result(q)
     end do
 
 end function mermaid_str
-!*****************************************************************************************
-
-!*****************************************************************************************
-!>
-!  Append text to a string builder.
-
-pure subroutine add(b, s)
-
-    type(string_builder), intent(inout) :: b !! the string builder
-    character(len=*), intent(in) :: s !! the text to append
-
-    character(len=:), allocatable :: tmp
-
-    if (.not. allocated(b%buf)) allocate(character(len=max(1024, 2*len(s))) :: b%buf)
-    if (b%n + len(s) > len(b%buf)) then
-        allocate(character(len=max(2*len(b%buf), b%n + len(s))) :: tmp)
-        tmp(1:b%n) = b%buf(1:b%n)
-        call move_alloc(tmp, b%buf)
-    end if
-    b%buf(b%n+1:b%n+len(s)) = s
-    b%n = b%n + len(s)
-
-end subroutine add
 !*****************************************************************************************
 
 !*****************************************************************************************

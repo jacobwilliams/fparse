@@ -18,6 +18,7 @@ A Fortran function parser and evaluator for expressions involving multiple varia
 * **Optional first derivatives** with respect to any of the input variables, using forward-mode automatic differentiation. Depending on the sizes involved, a derivative is a scalar, a vector or a matrix (Jacobian). Derivatives are computed only when you ask for them, so they don't slow down normal evaluation. Derivatives that the structure of the expressions shows are zero are skipped.
 * **Caching:** only the expressions whose inputs have changed since the last evaluation are recomputed. The others keep their previous results.
 * **Dependency queries:** find the variables an expression depends on, or the expressions that depend on a variable, directly or through other expressions, or get the full dependency matrix. You can export the dependency graph as Graphviz DOT, JSON (NetworkX/D3 node-link), GraphML or Mermaid.
+* **Code generation:** generate a standalone Fortran module that computes the expressions, and optionally their Jacobians, so a model prototyped with fparse can be compiled.
 * **Error checking.**
   * At parse time: syntax errors, undefined variables and functions, wrong argument counts, and invalid or duplicate names.
   * At runtime: division by zero, domain errors, size mismatches, out-of-bounds indexes, and unset variables.
@@ -181,6 +182,48 @@ In the graph, the inputs are blue, the intermediate outputs are gray, and the fi
 
 ![Dependency graph of the orbital element equations](media/dependency_graph.svg)
 
+#### Code generation
+
+`generate_fortran` writes Fortran source code for the expressions: a module with no dependencies, containing a subroutine that computes the outputs and, if `wrt` is given, one that also computes their Jacobians with respect to those inputs. The derivatives are written out as plain statements (forward mode), and derivatives that are known to be zero are skipped.
+
+```fortran-free-form
+character(len=:), allocatable :: code
+
+call p%parse(['x', 'y'], ['sqrt(x^2 + y^2)', 'atan2(y, x)    ', 'if(r, 0, r > 1)'], names=['r    ', 'theta', 'f    '])
+call p%set_variables([3.0_wp, 4.0_wp])
+call p%generate_fortran(code, module_name='polar', wrt=['x', 'y'])
+```
+
+The generated module contains `polar_eval(x, y, r, theta, f)` and `polar_jac(x, y, r, theta, f, d_r, d_theta, d_f)`:
+
+```fortran-free-form
+pure subroutine polar_eval(x, y, r, theta, f)
+    real(wp), intent(in) :: x
+    real(wp), intent(in) :: y
+    real(wp), intent(out) :: r
+    real(wp), intent(out) :: theta
+    real(wp), intent(out) :: f
+    real(wp) :: t1
+
+    r = sqrt(x**2 + y**2)
+    theta = atan2(y, x)
+    if (r > 1.0_wp) then
+        t1 = r
+    else
+        t1 = 0.0_wp
+    end if
+    f = t1
+end subroutine polar_eval
+```
+
+* The code is specialized for the sizes of the inputs that are currently set: scalars become `real(wp)` arguments, and vectors become arrays of the same size.
+* The arguments are the inputs, then the outputs, then (for the Jacobian routine) the Jacobian of each output, `d_<name>`. The Jacobian of a scalar output is a vector, and that of a vector output is a matrix with one row per element. The columns are the elements of the `wrt` variables, in order. A comment at the top of the module lists all of this.
+* Anonymous outputs are named `out<k>`. Names that would clash with Fortran intrinsics or the generated names get an underscore appended (a variable named `sin` becomes `sin_`).
+* The results are the same as fparse's, including the behavior of `^`, `if` (only the selected value is computed for a scalar condition), and the relational and logical operators.
+* The generated code doesn't check for domain errors (they give NaN or infinity, as in plain Fortran) or that indices are within bounds. User-defined functions aren't supported.
+
+The tests compile the generated code for several systems of expressions, run it, and check that its results match fparse's.
+
 ### Building and testing
 
 With [pixi](https://pixi.sh):
@@ -190,6 +233,7 @@ pixi run build     # fpm build
 pixi run test      # fpm test
 pixi run example   # run example/example.f90
 pixi run dependency-graph # run example/dependency_graph.f90 and update the graph above
+pixi run codegen   # run example/codegen.f90 (generate, compile and run Fortran code)
 pixi run docs      # FORD documentation in ./doc
 pixi run benchmark # run the speed benchmarks and update the table below
 pixi run benchmark-sparsity # compare derivatives with sparsity on and off
