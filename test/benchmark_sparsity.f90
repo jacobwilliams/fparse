@@ -103,6 +103,10 @@
         call p%parse(vars, exprs, names=names, status=status, errmsg=errmsg)
         if (status /= 0) error stop errmsg
         call p2%parse(vars, exprs, names=names)
+        ! the inputs are the same for every evaluation, so turn off caching
+        ! (otherwise only the first evaluation would compute anything):
+        call p%set_caching(.false.)
+        call p2%set_caching(.false.)
         do i = 1, size(vals)
             call p%set_variable(i, vals(i)%v)
             call p2%set_variable(i, vals(i)%v)
