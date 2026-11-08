@@ -16,6 +16,7 @@
 
 module fparse_lexer
 
+use, intrinsic :: iso_fortran_env, only: int64
 use fparse_common
 
 implicit none (type, external)
@@ -49,9 +50,10 @@ integer, parameter, public :: tok_not    = 21 !! `!` or `.not.`
 type, public :: token_t
     !! A token from an expression string.
     integer :: kind = tok_end !! the token kind (`tok_*` parameters)
-    character(len=:), allocatable :: text !! the token text (lowercase for identifiers)
     real(wp) :: value = 0.0_wp !! the value (for numbers)
     integer :: pos = 0 !! position of the start of the token in the string
+    integer :: last = -1 !! position of the end of the token in the string
+                         !! (the token text is `str(pos:last)`)
 end type token_t
 
 type :: dot_op_t
@@ -73,7 +75,8 @@ contains
 !*****************************************************************************************
 !>
 !  Convert an expression string into an array of tokens.
-!  The last token is always of kind `tok_end`.
+!  The last token is always of kind `tok_end` (the array may be larger
+!  than the number of tokens).
 
 subroutine tokenize(str, tokens, err)
 
@@ -192,12 +195,8 @@ subroutine tokenize(str, tokens, err)
         ntok = ntok + 1
         tokens(ntok)%kind = kind
         tokens(ntok)%pos = i
+        tokens(ntok)%last = j
         tokens(ntok)%value = val
-        if (kind == tok_ident) then
-            tokens(ntok)%text = to_lower(str(i:j))
-        else
-            tokens(ntok)%text = str(i:j)
-        end if
         i = j + 1
 
     end do
@@ -205,8 +204,7 @@ subroutine tokenize(str, tokens, err)
     ntok = ntok + 1
     tokens(ntok)%kind = tok_end
     tokens(ntok)%pos = n + 1
-    tokens(ntok)%text = ''
-    tokens = tokens(1:ntok)
+    tokens(ntok)%last = n
 
 end subroutine tokenize
 !*****************************************************************************************
@@ -226,6 +224,14 @@ subroutine lex_number(str, i, j, val, ok)
 
     integer :: k, n, kind, kend, ios
     character(len=:), allocatable :: numstr
+    integer(int64) :: m
+    integer :: nsig, nfrac, expo, esign, p10
+    logical :: fast, seen_dot
+
+    ! exact powers of ten (all are exactly representable):
+    real(wp), dimension(0:22), parameter :: pow10 = [1.0e0_wp, 1.0e1_wp, 1.0e2_wp, 1.0e3_wp, 1.0e4_wp, &
+        1.0e5_wp, 1.0e6_wp, 1.0e7_wp, 1.0e8_wp, 1.0e9_wp, 1.0e10_wp, 1.0e11_wp, 1.0e12_wp, 1.0e13_wp, &
+        1.0e14_wp, 1.0e15_wp, 1.0e16_wp, 1.0e17_wp, 1.0e18_wp, 1.0e19_wp, 1.0e20_wp, 1.0e21_wp, 1.0e22_wp]
 
     n = len(str)
     k = i                ! next character to examine
@@ -255,6 +261,60 @@ subroutine lex_number(str, i, j, val, ok)
     end if
     j = k - 1
 
+    ! Fast path, for numbers with at most 15 significant digits and a power of
+    ! ten of magnitude at most 22: the digits (an integer < 2^53) and the power
+    ! of ten are exact, so a single multiplication or division gives the
+    ! correctly rounded value (the same as `read`).
+    m = 0
+    nsig = 0
+    nfrac = 0
+    expo = 0
+    fast = .true.
+    seen_dot = .false.
+    k = i
+    do while (k <= j)
+        if (is_digit(str(k:k))) then
+            if (seen_dot) nfrac = nfrac + 1
+            if (nsig > 0 .or. str(k:k) /= '0') nsig = nsig + 1
+            if (nsig > 15) then
+                fast = .false.
+                exit
+            end if
+            m = 10 * m + (iachar(str(k:k)) - iachar('0'))
+        else if (str(k:k) == '.') then
+            seen_dot = .true.
+        else ! exponent
+            k = k + 1
+            esign = 1
+            if (str(k:k) == '+' .or. str(k:k) == '-') then
+                if (str(k:k) == '-') esign = -1
+                k = k + 1
+            end if
+            do while (k <= j)
+                expo = 10 * expo + (iachar(str(k:k)) - iachar('0'))
+                if (expo > 1000) then
+                    fast = .false.
+                    exit
+                end if
+                k = k + 1
+            end do
+            expo = esign * expo
+            exit
+        end if
+        k = k + 1
+    end do
+    p10 = expo - nfrac
+    if (fast .and. abs(p10) <= 22) then
+        if (p10 >= 0) then
+            val = real(m, wp) * pow10(p10)
+        else
+            val = real(m, wp) / pow10(-p10)
+        end if
+        ok = .true.
+        return
+    end if
+
+    ! otherwise, use the Fortran conversion:
     numstr = str(i:j)
     do k = 1, len(numstr)
         if (numstr(k:k) == 'd' .or. numstr(k:k) == 'D') numstr(k:k) = 'e'

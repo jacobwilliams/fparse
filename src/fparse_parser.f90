@@ -66,7 +66,9 @@ type, public :: node_t
     integer :: kind = 0 !! node kind (`node_*` parameter)
     integer :: op = 0 !! operator, function id, or variable index (depending on `kind`)
     real(wp) :: value = 0.0_wp !! the value (for constants)
-    integer, dimension(:), allocatable :: args !! indices of the child nodes
+    integer :: ia = 0 !! offset of the indices of the child nodes in `expr_tree%args`:
+                      !! they are `args(ia+1:ia+na)`
+    integer :: na = 0 !! number of child nodes
     integer :: pos = 0 !! position in the expression string (for error messages)
     integer :: iref = 0 !! for variables: the position of the variable in `expr_tree%refs`
 end type node_t
@@ -75,6 +77,8 @@ type, public :: expr_tree
     !! An expression tree. The nodes are stored in a flat array.
     type(node_t), dimension(:), allocatable :: nodes !! the nodes
     integer :: n_nodes = 0 !! number of nodes used
+    integer, dimension(:), allocatable :: args !! the indices of the child nodes of all the nodes
+    integer :: n_args = 0 !! number of elements of `args` used
     integer :: root = 0 !! index of the root node
     integer, dimension(:), allocatable :: refs !! indices of the variables referenced by the expression
     type(val_t), dimension(:), allocatable :: buf !! work buffers: the value of each node
@@ -98,8 +102,9 @@ type :: parser_t
     integer :: ip = 1 !! current token index
     type(expr_tree) :: tree !! the tree being built
     type(error_t) :: err !! error status
-    type(string_t), dimension(:), allocatable :: vars !! variable names
-    type(user_function), dimension(:), allocatable :: funcs !! user functions
+    character(len=:), pointer :: str => null() !! the expression
+    type(string_t), dimension(:), pointer :: vars => null() !! variable names
+    type(user_function), dimension(:), pointer :: funcs => null() !! user functions
 end type parser_t
 
 public :: parse_expression
@@ -113,9 +118,9 @@ contains
 
 subroutine parse_expression(str, vars, funcs, tree, err)
 
-    character(len=*), intent(in) :: str !! the expression
-    type(string_t), dimension(:), intent(in) :: vars !! the variable names (lowercase)
-    type(user_function), dimension(:), intent(in) :: funcs !! user-defined functions
+    character(len=*), intent(in), target :: str !! the expression
+    type(string_t), dimension(:), intent(in), target :: vars !! the variable names (lowercase)
+    type(user_function), dimension(:), intent(in), target :: funcs !! user-defined functions
     type(expr_tree), intent(out) :: tree !! the expression tree
     type(error_t), intent(inout) :: err !! error status
 
@@ -127,9 +132,11 @@ subroutine parse_expression(str, vars, funcs, tree, err)
         err = p%err
         return
     end if
-    p%vars = vars
-    p%funcs = funcs
-    allocate(p%tree%nodes(16))
+    ! (the pointers are only used during this call)
+    p%str => str
+    p%vars => vars
+    p%funcs => funcs
+    allocate(p%tree%nodes(16), p%tree%args(16))
     allocate(p%tree%refs(0))
 
     if (p%toks(1)%kind == tok_end) then
@@ -149,8 +156,10 @@ subroutine parse_expression(str, vars, funcs, tree, err)
     p%tree%root = root
     p%tree%nodes = p%tree%nodes(1:p%tree%n_nodes)
     call move_alloc(p%tree%nodes, tree%nodes)
+    call move_alloc(p%tree%args, tree%args)
     call move_alloc(p%tree%refs, tree%refs)
     tree%n_nodes = p%tree%n_nodes
+    tree%n_args = p%tree%n_args
     tree%root = root
     allocate(tree%buf(tree%n_nodes))
     call build_schedule(tree)
@@ -187,24 +196,24 @@ subroutine build_schedule(tree)
     do while (sp > 0)
         i = stack_node(sp)
         st = stack_state(sp)
-        nargs = size(tree%nodes(i)%args)
+        nargs = tree%nodes(i)%na
         if (st < nargs) then
             if (is_if(i)) then
                 ! the order is cond, a, b
                 select case (st)
                 case (0)
-                    child = tree%nodes(i)%args(3)
+                    child = tree%args(tree%nodes(i)%ia + 3)
                 case (1)
                     call add_step(step_branch, i)
                     branch_step(i) = tree%n_steps
-                    child = tree%nodes(i)%args(1)
+                    child = tree%args(tree%nodes(i)%ia + 1)
                 case default
                     call add_step(step_skip, i)
                     skip_step(i) = tree%n_steps
-                    child = tree%nodes(i)%args(2)
+                    child = tree%args(tree%nodes(i)%ia + 2)
                 end select
             else
-                child = tree%nodes(i)%args(st + 1)
+                child = tree%args(tree%nodes(i)%ia + st + 1)
             end if
             stack_state(sp) = st + 1
             sp = sp + 1
@@ -269,9 +278,20 @@ subroutine unexpected(p)
     if (peek(p) == tok_end) then
         call p%err%set('unexpected end of expression', cur_pos(p))
     else
-        call p%err%set('unexpected "'//p%toks(p%ip)%text//'"', cur_pos(p))
+        call p%err%set('unexpected "'//token_text(p)//'"', cur_pos(p))
     end if
 end subroutine unexpected
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Text of the current token.
+
+function token_text(p) result(text)
+    type(parser_t), intent(in) :: p !! the parser state
+    character(len=:), allocatable :: text !! the token text
+    text = p%str(p%toks(p%ip)%pos:p%toks(p%ip)%last)
+end function token_text
 !*****************************************************************************************
 
 !*****************************************************************************************
@@ -289,17 +309,28 @@ function add_node(p, kind, op, args, pos, value) result(idx)
     integer :: idx !! index of the new node
 
     type(node_t), dimension(:), allocatable :: tmp
+    integer, dimension(:), allocatable :: itmp
+    integer :: na
 
     if (p%tree%n_nodes == size(p%tree%nodes)) then
         allocate(tmp(2*size(p%tree%nodes)))
         tmp(1:p%tree%n_nodes) = p%tree%nodes(1:p%tree%n_nodes)
         call move_alloc(tmp, p%tree%nodes)
     end if
+    na = size(args)
+    if (p%tree%n_args + na > size(p%tree%args)) then
+        allocate(itmp(max(2*size(p%tree%args), p%tree%n_args + na)))
+        itmp(1:p%tree%n_args) = p%tree%args(1:p%tree%n_args)
+        call move_alloc(itmp, p%tree%args)
+    end if
     p%tree%n_nodes = p%tree%n_nodes + 1
     idx = p%tree%n_nodes
     p%tree%nodes(idx)%kind = kind
     p%tree%nodes(idx)%op = op
-    p%tree%nodes(idx)%args = args
+    p%tree%nodes(idx)%ia = p%tree%n_args
+    p%tree%nodes(idx)%na = na
+    p%tree%args(p%tree%n_args+1:p%tree%n_args+na) = args
+    p%tree%n_args = p%tree%n_args + na
     p%tree%nodes(idx)%pos = pos
     if (present(value)) p%tree%nodes(idx)%value = value
 
@@ -574,7 +605,7 @@ recursive function parse_primary(p) result(n)
         n = add_node(p, node_vector, 0, args, pos)
 
     case (tok_ident)
-        name = p%toks(p%ip)%text
+        name = to_lower(token_text(p))
         p%ip = p%ip + 1
 
         if (peek(p) == tok_lparen) then

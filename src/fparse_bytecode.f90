@@ -108,10 +108,10 @@ contains
         integer :: k, c1, c2, c3, id, nargs
 
         associate (node => tree%nodes(inode))
-            nargs = size(node%args)
-            if (nargs > 0) c1 = node%args(1)
-            if (nargs > 1) c2 = node%args(2)
-            if (nargs > 2) c3 = node%args(3)
+            nargs = node%na
+            if (nargs > 0) c1 = tree%args(node%ia + 1)
+            if (nargs > 1) c2 = tree%args(node%ia + 2)
+            if (nargs > 2) c3 = tree%args(node%ia + 3)
 
             ! the conditional `if(a, b, cond)`:
             !   [cond]  jz -> L1  [a]  move a  jmp -> L2  L1: [b]  move b  L2:
@@ -159,7 +159,7 @@ contains
                 case (fn_max, fn_min)
                     call add(fn_offset + id, c1, c2, inode, node%pos)
                     do k = 3, nargs
-                        call add(fn_offset + id, inode, node%args(k), inode, node%pos)
+                        call add(fn_offset + id, inode, tree%args(node%ia + k), inode, node%pos)
                     end do
                 case (1:fn_last_elemental)
                     call add(unary_offset + id, c1, 0, inode, node%pos)

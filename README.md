@@ -211,14 +211,14 @@ Time per evaluation (lower is better). In parentheses: time relative to native F
 
 | Case | Native Fortran | Python | fparse | [fortran_function_parser][ffp] | [feq-parse][feq] | [M_calculator][mcalc] |
 |---|---:|---:|---:|---:|---:|---:|
-| Simple expression | 0.5 ns | 48.9 ns (89x) | 21.2 ns (39x) | 12.2 ns (22x) ✅ | 164.3 ns (300x) | 55.59 µs (101420x) ❌ |
-| Trig expression | 4.3 ns | 79.1 ns (18x) | 29.1 ns (6.8x) | 25.1 ns (5.9x) ✅ | 198.2 ns (46x) | 101.11 µs (23539x) ❌ |
-| Polynomial | 0.6 ns | 91.6 ns (148x) | 30.3 ns (49x) ✅ | 35.9 ns (58x) | 1.27 µs (2050x) | 139.30 µs (224462x) ❌ |
-| Complex expression | 9.7 ns | 264.9 ns (27x) | 89.8 ns (9.3x) ✅ | 162.6 ns (17x) | 2.51 µs (258x) | 393.67 µs (40573x) ❌ |
-| 100 equations (time per set) | 205.4 ns | 5.90 µs (29x) | 2.56 µs (12x) ✅ | 4.69 µs (23x) | 107.09 µs (521x) | 9.93 ms (48345x) ❌ |
-| Vector, 1000 points (time per set) | 4.15 µs | 7.65 µs (1.8x) | 7.61 µs (1.8x) ✅ | 26.76 µs (6.4x) | 9.65 µs (2.3x) | 110.26 ms (26577x) ❌ |
-| Parse complex expression | — | 14.43 µs (0.9x) | 15.37 µs | 128.13 µs (8.3x) ❌ | 5.80 µs (0.4x) ✅ | — |
-| Trig expression + gradient | 12.6 ns | 132.8 ns (11x) | 309.1 ns (25x) ✅ | — | — | — |
+| Simple expression | 0.6 ns | 49.7 ns (88x) | 20.8 ns (37x) | 12.4 ns (22x) ✅ | 167.7 ns (296x) | 55.74 µs (98467x) ❌ |
+| Trig expression | 4.4 ns | 78.8 ns (18x) | 28.9 ns (6.6x) | 26.1 ns (6.0x) ✅ | 207.1 ns (47x) | 102.59 µs (23486x) ❌ |
+| Polynomial | 0.6 ns | 95.1 ns (151x) | 29.9 ns (48x) ✅ | 35.7 ns (57x) | 1.26 µs (2007x) | 148.75 µs (236956x) ❌ |
+| Complex expression | 9.9 ns | 266.4 ns (27x) | 90.2 ns (9.1x) ✅ | 160.5 ns (16x) | 2.46 µs (249x) | 396.15 µs (40170x) ❌ |
+| 100 equations (time per set) | 204.8 ns | 5.84 µs (29x) | 2.57 µs (13x) ✅ | 4.63 µs (23x) | 108.36 µs (529x) | 10.07 ms (49156x) ❌ |
+| Vector, 1000 points (time per set) | 4.14 µs | 7.55 µs (1.8x) | 7.46 µs (1.8x) ✅ | 27.03 µs (6.5x) | 9.63 µs (2.3x) | 109.90 ms (26531x) ❌ |
+| Parse complex expression | — | 15.02 µs (2.7x) | 5.47 µs | 105.43 µs (19x) ❌ | 4.84 µs (0.9x) ✅ | — |
+| Trig expression + gradient | 12.4 ns | 135.6 ns (11x) | 296.8 ns (24x) ✅ | — | — | — |
 
 Expressions (variables `x`, `y`, `z`):
 
@@ -246,6 +246,7 @@ Notes:
 * Some parsers from the list are left out:
   * [ffp](https://github.com/jacobwilliams/ffp) has an `fpm.toml` but doesn't compile under fpm, because it relies on implicit typing.
   * The others ([fortran_parser](https://github.com/sdm900/fortran_parser), [FortranParser](https://github.com/jacopo-chevallard/FortranParser), [Fortran-Expression-Evaluator](https://github.com/ivomarsoares-personal/Fortran-Expression-Evaluator), [calmat](https://github.com/hassaniriad/calmat)) aren't fpm packages.
+
 
 
 

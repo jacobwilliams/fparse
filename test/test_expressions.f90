@@ -11,6 +11,7 @@
     use fparse
     use testdrive, only: new_unittest, unittest_type, error_type, check, test_failed
     use test_utils
+    use, intrinsic :: iso_fortran_env, only: int64
 
     implicit none
 
@@ -45,6 +46,7 @@
         new_unittest("precedence", test_precedence), &
         new_unittest("logical_relational", test_logical_relational), &
         new_unittest("number_formats", test_number_formats), &
+        new_unittest("number_conversion", test_number_conversion), &
         new_unittest("formatting", test_formatting), &
         new_unittest("numeric_edge_cases", test_numeric_edge_cases), &
         new_unittest("identities", test_identities), &
@@ -267,6 +269,65 @@
     call p%get(1, r)
     call check(error, r == 1.0e-320_wp, 'subnormal literal')
     end subroutine test_number_formats
+
+    subroutine test_number_conversion(error)
+    !! numeric literals of many forms must have exactly the same value as with `read`
+    !! (the lexer has a fast path for numbers with few digits)
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
+    integer, parameter :: n = 3000
+    type(fparser) :: p
+    character(len=40), dimension(n) :: literals
+    character(len=40) :: tmp
+    real(wp) :: r, expected
+    integer :: i, k, nint_digits, nfrac_digits, iexp, ios
+    integer(int64) :: seed
+    seed = 12345
+    do i = 1, n
+        ! integer digits, fraction digits, exponent (some with more than 15 digits):
+        nint_digits = next(0, merge(20, 8, mod(i, 7) == 0))
+        nfrac_digits = next(0, merge(20, 8, mod(i, 11) == 0))
+        if (nint_digits + nfrac_digits == 0) nint_digits = 1
+        literals(i) = ''
+        do k = 1, nint_digits
+            literals(i) = trim(literals(i))//achar(iachar('0') + next(0, 9))
+        end do
+        if (nfrac_digits > 0 .or. next(0, 3) == 0) literals(i) = trim(literals(i))//'.'
+        do k = 1, nfrac_digits
+            literals(i) = trim(literals(i))//achar(iachar('0') + next(0, 9))
+        end do
+        if (next(0, 2) == 0) then
+            iexp = next(-30, 30)
+            select case (next(0, 3))
+            case (0); literals(i) = trim(literals(i))//'e'//itoa(iexp)
+            case (1); literals(i) = trim(literals(i))//'D'//itoa(iexp)
+            case (2); literals(i) = trim(literals(i))//'E+'//itoa(abs(iexp))
+            case default; literals(i) = trim(literals(i))//'d-'//itoa(abs(iexp))
+            end select
+        end if
+    end do
+    call p%parse(['x'], literals)
+    call check(error, .not. p%failed(), p%error_message()); if (allocated(error)) return
+    call p%set_variable('x', 0.0_wp)
+    call p%evaluate()
+    do i = 1, n
+        call p%get(i, r)
+        tmp = literals(i)
+        do k = 1, len_trim(tmp)
+            if (tmp(k:k) == 'd' .or. tmp(k:k) == 'D') tmp(k:k) = 'e'
+        end do
+        read(tmp, *, iostat=ios) expected
+        call check(error, ios == 0 .and. r == expected, 'wrong value for "'//trim(literals(i))//'"')
+        if (allocated(error)) return
+    end do
+    contains
+        integer function next(lo, hi)
+        !! a pseudo-random integer in `[lo, hi]` (a linear congruential generator)
+        integer, intent(in) :: lo !! the lower bound
+        integer, intent(in) :: hi !! the upper bound
+        seed = mod(1103515245_int64 * seed + 12345_int64, 2147483648_int64)
+        next = lo + int(mod(seed / 65536_int64, int(hi - lo + 1, int64)))
+        end function next
+    end subroutine test_number_conversion
 
     subroutine test_formatting(error)
     !! whitespace and case

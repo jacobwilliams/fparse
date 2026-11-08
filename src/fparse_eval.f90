@@ -116,7 +116,7 @@ subroutine eval_steps(tree, vars, funcs, ctx, dref)
             if (ctx%err%failed) return
         case (step_branch)
             ! if the condition is a scalar zero, skip `a`:
-            c3 = tree%nodes(inode)%args(3)
+            c3 = tree%args(tree%nodes(inode)%ia + 3)
             if (size(tree%buf(c3)%v) == 1) then
                 if (tree%buf(c3)%v(1) == 0.0_wp) then
                     k = tree%sched(3, k)
@@ -125,7 +125,7 @@ subroutine eval_steps(tree, vars, funcs, ctx, dref)
             end if
         case (step_skip)
             ! `a` has been evaluated: if the condition is a scalar, skip `b`:
-            c3 = tree%nodes(inode)%args(3)
+            c3 = tree%args(tree%nodes(inode)%ia + 3)
             if (size(tree%buf(c3)%v) == 1) then
                 k = tree%sched(3, k)
                 cycle
@@ -178,7 +178,7 @@ subroutine eval_node(tree, inode, vars, funcs, ctx, dref)
         call copy_val(vars(op), tree%buf(inode), nd)
 
     case (node_unary)
-        c1 = tree%nodes(inode)%args(1)
+        c1 = tree%args(tree%nodes(inode)%ia + 1)
         associate (a => tree%buf(c1), r => tree%buf(inode))
             call ensure(r, size(a%v), nd)
             if (op == op_neg) then
@@ -191,8 +191,8 @@ subroutine eval_node(tree, inode, vars, funcs, ctx, dref)
         end associate
 
     case (node_binary)
-        c1 = tree%nodes(inode)%args(1)
-        c2 = tree%nodes(inode)%args(2)
+        c1 = tree%args(tree%nodes(inode)%ia + 1)
+        c2 = tree%args(tree%nodes(inode)%ia + 2)
         call binary_op(op, tree%buf(c1), tree%buf(c2), ctx, pos, tree%buf(inode))
 
     case (node_builtin)
@@ -202,16 +202,16 @@ subroutine eval_node(tree, inode, vars, funcs, ctx, dref)
         call eval_user(tree, inode, funcs, ctx)
 
     case (node_vector)
-        nargs = size(tree%nodes(inode)%args)
+        nargs = tree%nodes(inode)%na
         n = 0
         do k = 1, nargs
-            c1 = tree%nodes(inode)%args(k)
+            c1 = tree%args(tree%nodes(inode)%ia + k)
             n = n + size(tree%buf(c1)%v)
         end do
         call ensure(tree%buf(inode), n, nd)
         i = 0
         do k = 1, nargs
-            c1 = tree%nodes(inode)%args(k)
+            c1 = tree%args(tree%nodes(inode)%ia + k)
             associate (a => tree%buf(c1), r => tree%buf(inode))
                 m = size(a%v)
                 r%v(i+1:i+m) = a%v
@@ -221,8 +221,8 @@ subroutine eval_node(tree, inode, vars, funcs, ctx, dref)
         end do
 
     case (node_index)
-        c1 = tree%nodes(inode)%args(1)
-        c2 = tree%nodes(inode)%args(2)
+        c1 = tree%args(tree%nodes(inode)%ia + 1)
+        c2 = tree%args(tree%nodes(inode)%ia + 2)
         associate (a => tree%buf(c1), b => tree%buf(c2), r => tree%buf(inode))
             if (size(b%v) /= 1) then
                 call ctx%err%set('index must be a scalar', pos)
@@ -267,15 +267,15 @@ subroutine eval_builtin(tree, inode, ctx)
     nd = ctx%nd
     id = tree%nodes(inode)%op
     pos = tree%nodes(inode)%pos
-    nargs = size(tree%nodes(inode)%args)
+    nargs = tree%nodes(inode)%na
 
-    c1 = tree%nodes(inode)%args(1)
+    c1 = tree%args(tree%nodes(inode)%ia + 1)
     c2 = c1
-    if (nargs > 1) c2 = tree%nodes(inode)%args(2)
+    if (nargs > 1) c2 = tree%args(tree%nodes(inode)%ia + 2)
     if (id == fn_if) then
         ! if(a, b, cond): when cond is a scalar, only the selected
         ! branch has been evaluated (see [[build_schedule]])
-        c3 = tree%nodes(inode)%args(3)
+        c3 = tree%args(tree%nodes(inode)%ia + 3)
         if (size(tree%buf(c3)%v) == 1) then
             if (tree%buf(c3)%v(1) /= 0.0_wp) then
                 c = c1
@@ -326,7 +326,7 @@ subroutine eval_builtin(tree, inode, ctx)
             ! size of the result:
             m = n
             do k = 2, nargs
-                nb = size(tree%buf(tree%nodes(inode)%args(k))%v)
+                nb = size(tree%buf(tree%args(tree%nodes(inode)%ia + k))%v)
                 if (nb == m .or. nb == 1) cycle
                 if (m == 1) then
                     m = nb
@@ -342,7 +342,7 @@ subroutine eval_builtin(tree, inode, ctx)
                 if (nd > 0) r%d(i, :) = a%d(ia, :)
             end do
             do k = 2, nargs
-                associate (bk => tree%buf(tree%nodes(inode)%args(k)))
+                associate (bk => tree%buf(tree%args(tree%nodes(inode)%ia + k)))
                     nb = size(bk%v)
                     do i = 1, m
                         ib = merge(1, i, nb == 1)
@@ -874,10 +874,10 @@ subroutine eval_user(tree, inode, funcs, ctx)
 
     ifunc = tree%nodes(inode)%op
     pos = tree%nodes(inode)%pos
-    nargs = size(tree%nodes(inode)%args)
+    nargs = tree%nodes(inode)%na
     allocate(uargs(nargs))
     do k = 1, nargs
-        c = tree%nodes(inode)%args(k)
+        c = tree%args(tree%nodes(inode)%ia + k)
         uargs(k)%v = tree%buf(c)%v
     end do
 
@@ -900,7 +900,7 @@ subroutine eval_user(tree, inode, funcs, ctx)
         if (ctx%nd > 0) then
             r%d = 0.0_wp
             do k = 1, nargs
-                associate (arg => tree%buf(tree%nodes(inode)%args(k)))
+                associate (arg => tree%buf(tree%args(tree%nodes(inode)%ia + k)))
                     if (all(arg%d == 0.0_wp)) cycle ! no contribution
                     stat = 0
                     if (associated(f%df)) then
