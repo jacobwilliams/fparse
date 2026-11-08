@@ -7,6 +7,7 @@
 !  * [fortran_function_parser](https://github.com/jacobwilliams/fortran_function_parser)
 !  * [feq-parse](https://github.com/FluidNumerics/feq-parse)
 !  * [M_calculator](https://github.com/urbanjost/M_calculator)
+!  * [evaluate.f](https://github.com/davidpfister/evaluate.f)
 !
 !  The same calculations written in Python ([test/benchmark.py](../test/benchmark.py))
 !  are also timed, if Python and numpy are available.
@@ -29,6 +30,7 @@
     use function_parser, only: ffp_parser => fparser, ffp_parser_array => fparser_array
     use FEQParse, only: EquationParser
     use M_calculator, only: dnum0, mc_x => x
+    use evaluate, only: ev_eval => eval, ev_defparam => defparam
 
     implicit none
 
@@ -43,10 +45,11 @@
     integer, parameter :: i_ffp    = 4
     integer, parameter :: i_feq    = 5
     integer, parameter :: i_mcalc  = 6
-    integer, parameter :: n_impl   = 6
+    integer, parameter :: i_evalf  = 7
+    integer, parameter :: n_impl   = 7
     character(len=*), dimension(n_impl), parameter :: impl_names = [character(len=50) :: &
         'Native Fortran', 'Python', 'fparse', '[fortran_function_parser][ffp]', '[feq-parse][feq]', &
-        '[M_calculator][mcalc]']
+        '[M_calculator][mcalc]', '[evaluate.f][evalf]']
 
     ! benchmark cases:
     integer, parameter :: c_simple  = 1
@@ -95,6 +98,7 @@
     type(EquationParser) :: feq1
     type(EquationParser), dimension(:), allocatable :: feqa
     character(len=:), allocatable :: mc_expr
+    character(len=:), allocatable :: ev_expr !! the expression for evaluate.f
     character(len=200), dimension(n_many) :: many_exprs
     real(wp) :: sink = 0.0_wp !! sum of all checksums (printed, so the compiler can't optimize the loops away)
     character(len=:), allocatable :: python_version !! the Python and numpy versions (empty if not available)
@@ -187,7 +191,8 @@
     integer, intent(in) :: icase !! the case index
     select case (icase)
     case (c_parse)
-        supported = impl /= i_native .and. impl /= i_mcalc  ! M_calculator has no separate parse step
+        ! M_calculator and evaluate.f have no separate parse step:
+        supported = impl /= i_native .and. impl /= i_mcalc .and. impl /= i_evalf
     case (c_grad)
         supported = impl == i_native .or. impl == i_python .or. impl == i_fparse  ! only fparse has derivatives
     case default
@@ -251,6 +256,8 @@
         do k = 1, n_many
             mc_many_exprs(k) = to_mcalc(many_exprs(k))
         end do
+    case (i_evalf)
+        ev_expr = trim(case_expr())
     end select
 
     end subroutine setup
@@ -357,6 +364,7 @@
     case (i_ffp);    call run_ffp(n, cs)
     case (i_feq);    call run_feq(n, cs)
     case (i_mcalc);  call run_mcalc(n, cs)
+    case (i_evalf);  call run_evalf(n, cs)
     end select
 
     end subroutine run
@@ -617,6 +625,63 @@
 
 !*****************************************************************************************
 !>
+!  evaluate.f (an interpreter: the string is processed on every evaluation,
+!  and the variables are stored in its symbol table).
+
+    subroutine run_evalf(n, cs)
+
+    integer, intent(in) :: n !! the number of iterations
+    real(wp), intent(out) :: cs !! the checksum of the results
+
+    integer :: i, k
+    real(wp) :: x, y, z, d, r
+
+    cs = 0.0_wp
+    select case (icase)
+    case (c_simple, c_trig, c_poly, c_complex)
+        do i = 1, n
+            call inputs(i, x, y, z)
+            call set_evalf(x, y, z)
+            call ev_eval(ev_expr, r)
+            cs = cs + r
+        end do
+    case (c_many)
+        do i = 1, n
+            call inputs(i, x, y, z)
+            call set_evalf(x, y, z)
+            do k = 1, n_many
+                call ev_eval(trim(many_exprs(k)), r)
+                cs = cs + r
+            end do
+        end do
+    case (c_vector)
+        do i = 1, n
+            d = 1.0e-7_wp * mod(i, 1000)
+            do k = 1, n_pts
+                call set_evalf(xs(k)+d, ys(k)+d, zs(k)+d)
+                call ev_eval(ev_expr, r)
+                cs = cs + r
+            end do
+        end do
+    end select
+
+    contains
+
+        subroutine set_evalf(x, y, z)
+        !! set the variables in the evaluate.f symbol table
+        real(wp), intent(in) :: x !! the value of `x`
+        real(wp), intent(in) :: y !! the value of `y`
+        real(wp), intent(in) :: z !! the value of `z`
+        call ev_defparam('x', x)
+        call ev_defparam('y', y)
+        call ev_defparam('z', z)
+        end subroutine set_evalf
+
+    end subroutine run_evalf
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
 !  Run the Python benchmarks (test/benchmark.py) and read the results.
 !  If Python (or numpy) is not available, `available` is false.
 
@@ -769,7 +834,8 @@
         optimization_options()//'`.'//nl//nl//&
         '[ffp]: https://github.com/jacobwilliams/fortran_function_parser'//nl//&
         '[feq]: https://github.com/FluidNumerics/feq-parse'//nl//&
-        '[mcalc]: https://github.com/urbanjost/M_calculator'
+        '[mcalc]: https://github.com/urbanjost/M_calculator'//nl//&
+        '[evalf]: https://github.com/davidpfister/evaluate.f'
 
     end function make_table
 !*****************************************************************************************
