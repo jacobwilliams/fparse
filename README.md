@@ -72,8 +72,8 @@ Every method takes the optional outputs `status` (0 means success) and `errmsg`.
 
 | Kind | Functions |
 |---|---|
-| one argument, element-wise | `abs sqrt exp log (ln) log10 sin cos tan asin acos atan sinh cosh tanh asinh acosh atanh erf erfc floor ceiling (ceil) nint (anint, round) aint (trunc)` |
-| two arguments, element-wise | `atan2(y,x) mod(a,p) modulo(a,p) sign(a,b) hypot(x,y)` |
+| one argument, element-wise | `abs sqrt exp log (ln) log10 sin cos tan asin acos atan sinh cosh tanh asinh acosh atanh erf erfc floor ceiling (ceil) nint (anint, round) aint (trunc)`, and in degrees: `sind cosd tand asind acosd atand` |
+| two arguments, element-wise | `atan2(y,x) (atan(y,x)) atan2d(y,x) (atand(y,x)) mod(a,p) modulo(a,p) sign(a,b) hypot(x,y)` |
 | two or more arguments | `max(a,b,...) min(a,b,...)` |
 | reductions (scalar result) | `sum product norm2 (norm) maxval minval size` |
 | vector | `dot_product(a,b) (dot)`, `cross(a,b)` |

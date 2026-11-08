@@ -163,7 +163,7 @@ contains
                     end do
                 case (1:fn_last_elemental)
                     call add(unary_offset + id, c1, 0, inode, node%pos)
-                case (fn_atan2, fn_mod, fn_modulo, fn_sign, fn_hypot)
+                case (fn_atan2, fn_mod, fn_modulo, fn_sign, fn_hypot, fn_atan2d)
                     call add(fn_offset + id, c1, c2, inode, node%pos)
                 case (fn_sum, fn_product, fn_maxval, fn_minval) ! of a scalar
                     call add(ins_move, c1, 0, inode, node%pos)

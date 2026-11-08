@@ -639,11 +639,20 @@ recursive function parse_primary(p) result(n)
                 if (min_args == max_args) then
                     call p%err%set('function "'//name//'" requires '//int_to_str(min_args)//&
                                    ' argument(s) but '//int_to_str(size(args))//' were given', pos)
-                else
+                else if (max_args < 0) then
                     call p%err%set('function "'//name//'" requires at least '//int_to_str(min_args)//&
                                    ' arguments but '//int_to_str(size(args))//' were given', pos)
+                else
+                    call p%err%set('function "'//name//'" requires '//int_to_str(min_args)//' to '//&
+                                   int_to_str(max_args)//' arguments but '//int_to_str(size(args))//&
+                                   ' were given', pos)
                 end if
                 return
+            end if
+            ! the two-argument forms of atan and atand:
+            if (size(args) == 2) then
+                if (id == fn_atan) id = fn_atan2
+                if (id == fn_atand) id = fn_atan2d
             end if
             n = add_node(p, node_builtin, id, args, pos)
 

@@ -30,6 +30,8 @@ implicit none (type, external)
 private
 
 real(wp), parameter :: pi = acos(-1.0_wp)
+real(wp), parameter :: deg2rad = pi / 180.0_wp !! degrees to radians
+real(wp), parameter :: rad2deg = 180.0_wp / pi !! radians to degrees
 
 type(val_t), dimension(0) :: no_dref !! used when no `dref` is given
 
@@ -49,6 +51,10 @@ integer, parameter :: err_asin       = 9
 integer, parameter :: err_acos       = 10
 integer, parameter :: err_acosh      = 11
 integer, parameter :: err_atanh      = 12
+integer, parameter :: err_tand       = 13
+integer, parameter :: err_asind      = 14
+integer, parameter :: err_acosd      = 15
+integer, parameter :: err_atan2d     = 16
 
 type, public :: eval_ctx
     !! Evaluation context.
@@ -355,7 +361,7 @@ subroutine eval_builtin(tree, inode, ctx)
                 end associate
             end do
 
-        case (fn_atan2, fn_mod, fn_modulo, fn_sign, fn_hypot)
+        case (fn_atan2, fn_mod, fn_modulo, fn_sign, fn_hypot, fn_atan2d)
             call binary_op(fn_offset + id, a, b, ctx, pos, r)
 
         case (fn_sum)
@@ -536,7 +542,7 @@ end subroutine binary_op
 pure logical function has_domain_check(code)
     integer, intent(in) :: code !! the operation code
     select case (code)
-    case (op_div, op_pow, fn_offset + fn_atan2, fn_offset + fn_mod, fn_offset + fn_modulo)
+    case (op_div, op_pow, fn_offset + fn_atan2, fn_offset + fn_mod, fn_offset + fn_modulo, fn_offset + fn_atan2d)
         has_domain_check = .true.
     case default
         has_domain_check = .false.
@@ -564,6 +570,8 @@ pure integer function binary_check(code, x, y) result(ierr)
         end if
     case (fn_offset + fn_atan2)
         if (x == 0.0_wp .and. y == 0.0_wp) ierr = err_atan2
+    case (fn_offset + fn_atan2d)
+        if (x == 0.0_wp .and. y == 0.0_wp) ierr = err_atan2d
     case (fn_offset + fn_mod, fn_offset + fn_modulo)
         if (y == 0.0_wp) ierr = err_mod_zero
     end select
@@ -597,6 +605,7 @@ pure elemental real(wp) function binary_value(code, x, y) result(f)
     case (fn_offset + fn_modulo); f = modulo(x, y)
     case (fn_offset + fn_sign);   f = sign(x, y)
     case (fn_offset + fn_hypot);  f = hypot(x, y)
+    case (fn_offset + fn_atan2d); f = atan2d(x, y)
     case default; f = 0.0_wp
     end select
 end function binary_value
@@ -632,6 +641,10 @@ pure subroutine binary_partials(code, x, y, f, dx, dy)
         tmp = x**2 + y**2
         dx = y / tmp
         dy = -x / tmp
+    case (fn_offset + fn_atan2d)
+        tmp = x**2 + y**2
+        dx = rad2deg * y / tmp
+        dy = -rad2deg * x / tmp
     case (fn_offset + fn_mod)
         dx = 1.0_wp
         dy = -aint(x / y)
@@ -703,7 +716,7 @@ end subroutine unary_fn
 pure logical function has_unary_check(id)
     integer, intent(in) :: id !! the function id
     select case (id)
-    case (fn_sqrt, fn_log, fn_log10, fn_asin, fn_acos, fn_acosh, fn_atanh)
+    case (fn_sqrt, fn_log, fn_log10, fn_asin, fn_acos, fn_acosh, fn_atanh, fn_tand, fn_asind, fn_acosd)
         has_unary_check = .true.
     case default
         has_unary_check = .false.
@@ -756,6 +769,9 @@ pure integer function unary_check(id, x) result(ierr)
     case (fn_acos);  if (abs(x) > 1.0_wp) ierr = err_acos
     case (fn_acosh); if (x < 1.0_wp) ierr = err_acosh
     case (fn_atanh); if (abs(x) >= 1.0_wp) ierr = err_atanh
+    case (fn_tand);  if (cosd(x) == 0.0_wp) ierr = err_tand
+    case (fn_asind); if (abs(x) > 1.0_wp) ierr = err_asind
+    case (fn_acosd); if (abs(x) > 1.0_wp) ierr = err_acosd
     end select
 end function unary_check
 !*****************************************************************************************
@@ -791,6 +807,12 @@ pure elemental real(wp) function unary_value(id, x) result(f)
     case (fn_ceiling); f = -floor_r(-x)
     case (fn_nint);    f = anint(x)
     case (fn_aint);    f = aint(x)
+    case (fn_sind);    f = sind(x)
+    case (fn_cosd);    f = cosd(x)
+    case (fn_tand);    f = tand(x)
+    case (fn_asind);   f = asind(x)
+    case (fn_acosd);   f = acosd(x)
+    case (fn_atand);   f = atand(x)
     case default;      f = 0.0_wp
     end select
 end function unary_value
@@ -824,6 +846,12 @@ pure real(wp) function unary_derivative(id, x, f) result(fp)
     case (fn_atanh); fp = 1.0_wp / (1.0_wp - x**2)
     case (fn_erf);   fp = 2.0_wp / sqrt(pi) * exp(-x**2)
     case (fn_erfc);  fp = -2.0_wp / sqrt(pi) * exp(-x**2)
+    case (fn_sind);  fp = deg2rad * cosd(x)
+    case (fn_cosd);  fp = -deg2rad * sind(x)
+    case (fn_tand);  fp = deg2rad * (1.0_wp + f**2)
+    case (fn_asind); fp = rad2deg / sqrt(1.0_wp - x**2)
+    case (fn_acosd); fp = -rad2deg / sqrt(1.0_wp - x**2)
+    case (fn_atand); fp = rad2deg / (1.0_wp + x**2)
     case default;    fp = 0.0_wp ! piecewise constant functions
     end select
 end function unary_derivative
@@ -849,6 +877,10 @@ pure function domain_message(ierr) result(msg)
     case (err_acos);     msg = 'acos argument outside [-1,1]'
     case (err_acosh);    msg = 'acosh argument less than 1'
     case (err_atanh);    msg = 'atanh argument outside (-1,1)'
+    case (err_tand);     msg = 'tand of an odd multiple of 90 degrees'
+    case (err_asind);    msg = 'asind argument outside [-1,1]'
+    case (err_acosd);    msg = 'acosd argument outside [-1,1]'
+    case (err_atan2d);   msg = 'atan2d arguments are both zero'
     case default;        msg = 'domain error'
     end select
 end function domain_message

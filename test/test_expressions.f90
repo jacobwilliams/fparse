@@ -50,6 +50,8 @@
         new_unittest("formatting", test_formatting), &
         new_unittest("numeric_edge_cases", test_numeric_edge_cases), &
         new_unittest("identities", test_identities), &
+        new_unittest("degree_trig", test_degree_trig), &
+        new_unittest("degree_trig_derivatives", test_degree_trig_derivatives), &
         new_unittest("complicated", test_complicated), &
         new_unittest("conditionals", test_conditionals), &
         new_unittest("vector_to_scalar", test_vector_to_scalar), &
@@ -416,6 +418,91 @@
         case_t('sin(pi/6) + cos(pi/3)', 1.0_wp), &
         case_t('cos(pi)', -1.0_wp) ], tol=1.0e-14_wp)
     end subroutine test_identities
+
+    subroutine test_degree_trig(error)
+    !! trigonometric functions in degrees, and the two-argument forms of atan and atand
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
+    real(wp), parameter :: d2r = pi / 180.0_wp
+    ! values at standard angles (with a tolerance of a few units in the last place,
+    ! since the intrinsics are only exact for these with some compilers and options):
+    call check_cases(error, [ &
+        case_t('sind(0)', 0.0_wp), case_t('sind(30)', 0.5_wp), case_t('sind(90)', 1.0_wp), &
+        case_t('sind(150)', 0.5_wp), case_t('sind(180)', 0.0_wp), case_t('sind(210)', -0.5_wp), &
+        case_t('sind(270)', -1.0_wp), case_t('sind(360)', 0.0_wp), case_t('sind(-30)', -0.5_wp), &
+        case_t('sind(-90)', -1.0_wp), case_t('sind(750)', 0.5_wp), case_t('sind(-690)', 0.5_wp), &
+        case_t('cosd(0)', 1.0_wp), case_t('cosd(60)', 0.5_wp), case_t('cosd(90)', 0.0_wp), &
+        case_t('cosd(120)', -0.5_wp), case_t('cosd(180)', -1.0_wp), case_t('cosd(270)', 0.0_wp), &
+        case_t('cosd(-60)', 0.5_wp), case_t('cosd(300)', 0.5_wp), &
+        case_t('sind(45)', sqrt(0.5_wp)), case_t('cosd(45)', sqrt(0.5_wp)), case_t('cosd(30)', sqrt(3.0_wp)/2), &
+        case_t('tand(0)', 0.0_wp), case_t('tand(45)', 1.0_wp), case_t('tand(135)', -1.0_wp), &
+        case_t('tand(-45)', -1.0_wp), case_t('tand(225)', 1.0_wp), case_t('tand(180)', 0.0_wp), &
+        case_t('asind(0.5)', 30.0_wp), case_t('asind(-0.5)', -30.0_wp), case_t('asind(1)', 90.0_wp), &
+        case_t('asind(-1)', -90.0_wp), case_t('asind(0)', 0.0_wp), &
+        case_t('acosd(1)', 0.0_wp), case_t('acosd(-1)', 180.0_wp), case_t('acosd(0.5)', 60.0_wp), &
+        case_t('acosd(-0.5)', 120.0_wp), case_t('acosd(0)', 90.0_wp), &
+        case_t('atand(1)', 45.0_wp), case_t('atand(-1)', -45.0_wp), case_t('atand(0)', 0.0_wp), &
+        case_t('atan2d(1, -1)', 135.0_wp), case_t('atan2d(-1, -1)', -135.0_wp), case_t('atan2d(0, -1)', 180.0_wp), &
+        case_t('atan2d(1, 0)', 90.0_wp), case_t('atan2d(-2, 0)', -90.0_wp), case_t('atan2d(3, 3)', 45.0_wp), &
+        case_t('atand(1, -1)', 135.0_wp), case_t('atand(-5, 5)', -45.0_wp) ], tol=4.0_wp*epsilon(1.0_wp))
+    if (allocated(error)) return
+    ! other values, compared with the functions in radians:
+    call check_cases(error, [ &
+        case_t('sind(x)', sin(xv*d2r)), case_t('sind(y)', sin(yv*d2r)), case_t('sind(1234.5)', sin(1234.5_wp*d2r)), &
+        case_t('cosd(z)', cos(zv*d2r)), case_t('cosd(-77.7)', cos(-77.7_wp*d2r)), &
+        case_t('tand(w)', tan(wv*d2r)), case_t('tand(100)', tan(100.0_wp*d2r)), &
+        case_t('asind(x)', asin(xv)/d2r), case_t('acosd(x)', acos(xv)/d2r), case_t('atand(y)', atan(yv)/d2r), &
+        case_t('atan2d(y, x)', atan2(yv, xv)/d2r), case_t('atand(y, x)', atan2(yv, xv)/d2r), &
+        case_t('atan(y, x)', atan2(yv, xv)), case_t('atan(y, x) - atan2(y, x)', 0.0_wp), case_t('atan(z)', atan(zv)), &
+        case_t('sind(x)^2 + cosd(x)^2', 1.0_wp), case_t('sind(asind(x))', xv), case_t('tand(atand(z))', zv), &
+        case_t('sind(90*x) - sin(pi/2*x)', 0.0_wp), case_t('atand(1e300)', 90.0_wp), &
+        case_t('sind(1e10)', -cos(10.0_wp*d2r)) ], tol=1.0e-14_wp)  ! 1e10 = 27777777*360 + 280
+    if (allocated(error)) return
+    ! vectors:
+    call check_vexpr(error, 'sind([0, 30, 90, 180, 270])', [0.0_wp, 0.5_wp, 1.0_wp, 0.0_wp, -1.0_wp], ['x'], &
+                     [fparse_value([0.0_wp])], tol=4.0_wp*epsilon(1.0_wp))
+    if (allocated(error)) return
+    call check_vexpr(error, 'atan2d([1, -1], -1)', [135.0_wp, -135.0_wp], ['x'], [fparse_value([0.0_wp])], &
+                     tol=4.0_wp*epsilon(1.0_wp))
+    if (allocated(error)) return
+    ! errors:
+    call check_error_cases(error, [ &
+        err_case_t('tand(90)', 'tand of an odd multiple of 90 degrees'), &
+        err_case_t('tand(-270)', 'tand of an odd multiple of 90 degrees'), &
+        err_case_t('tand([0, 45, 90])', 'tand of an odd multiple of 90 degrees'), &
+        err_case_t('asind(1.5)', 'asind argument outside [-1,1]'), &
+        err_case_t('acosd(-2)', 'acosd argument outside [-1,1]'), &
+        err_case_t('atan2d(0, 0)', 'atan2d arguments are both zero'), &
+        err_case_t('atand(0, 0)', 'atan2d arguments are both zero'), &
+        err_case_t('atan(0, 0)', 'atan2 arguments are both zero') ])
+    if (allocated(error)) return
+    call check_parse_error(error, ['atan(1, 2, 3)'], ['x'], 'function "atan" requires 1 to 2 arguments but 3 were given')
+    if (allocated(error)) return
+    call check_parse_error(error, ['atand()'], ['x'], 'function "atand" requires 1 to 2 arguments but 0 were given')
+    if (allocated(error)) return
+    call check_parse_error(error, ['sind(1, 2)'], ['x'], 'function "sind" requires 1 argument(s) but 2 were given')
+    end subroutine test_degree_trig
+
+    subroutine test_degree_trig_derivatives(error)
+    !! derivatives of the trigonometric functions in degrees
+    type(error_type), allocatable, intent(out) :: error !! the error, allocated if the test fails
+    real(wp), parameter :: d2r = pi / 180.0_wp
+    real(wp) :: a
+    a = zv * 10 ! the argument of the functions: z*10 [deg]
+    call check_exact_derivative(error, 'sind(z*10)', 'z', 10 * d2r * cos(a*d2r)); if (allocated(error)) return
+    call check_exact_derivative(error, 'cosd(z*10)', 'z', -10 * d2r * sin(a*d2r)); if (allocated(error)) return
+    call check_exact_derivative(error, 'tand(z*10)', 'z', 10 * d2r / cos(a*d2r)**2); if (allocated(error)) return
+    call check_exact_derivative(error, 'asind(x)', 'x', 1 / (d2r * sqrt(1 - xv**2))); if (allocated(error)) return
+    call check_exact_derivative(error, 'acosd(x)', 'x', -1 / (d2r * sqrt(1 - xv**2))); if (allocated(error)) return
+    call check_exact_derivative(error, 'atand(y)', 'y', 1 / (d2r * (1 + yv**2))); if (allocated(error)) return
+    call check_exact_derivative(error, 'atan2d(y, x)', 'y', xv / (d2r * (xv**2 + yv**2))); if (allocated(error)) return
+    call check_exact_derivative(error, 'atan2d(y, x)', 'x', -yv / (d2r * (xv**2 + yv**2))); if (allocated(error)) return
+    call check_exact_derivative(error, 'atand(y, x)', 'x', -yv / (d2r * (xv**2 + yv**2))); if (allocated(error)) return
+    call check_exact_derivative(error, 'atan(y, x)', 'y', xv / (xv**2 + yv**2)); if (allocated(error)) return
+    call check_exact_derivative(error, 'sind(x*w)^2 + cosd(x*w)^2', 'x', 0.0_wp); if (allocated(error)) return
+    call check_derivs_fd(error, str_list('a = sind(u*100) * cosd(v*50)', 'b = atan2d(u, v) + tand(u*v*20)', &
+                                         'c = asind(u/2) + acosd(v/3) + atand(u, -v)'), &
+                         ['u', 'v'], [fparse_value([0.3_wp, -0.6_wp]), fparse_value([1.1_wp, 0.8_wp])])
+    end subroutine test_degree_trig_derivatives
 
     subroutine test_complicated(error)
     !! complicated expressions, compared with native Fortran

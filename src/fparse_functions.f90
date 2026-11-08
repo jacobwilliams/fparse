@@ -10,11 +10,14 @@
 !
 !  `abs`, `sqrt`, `exp`, `log` (`ln`), `log10`, `sin`, `cos`, `tan`, `asin`, `acos`,
 !  `atan`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, `erf`, `erfc`,
-!  `floor`, `ceiling` (`ceil`), `nint` (`anint`, `round`), `aint` (`trunc`)
+!  `floor`, `ceiling` (`ceil`), `nint` (`anint`, `round`), `aint` (`trunc`),
+!  and the trigonometric functions in degrees: `sind`, `cosd`, `tand`, `asind`,
+!  `acosd`, `atand`
 !
 !  Elemental functions of two arguments (scalars are broadcast to vectors):
 !
-!  `atan2(y,x)`, `mod(a,p)`, `modulo(a,p)`, `sign(a,b)`, `hypot(x,y)`
+!  `atan2(y,x)` (also `atan(y,x)`), `atan2d(y,x)` (also `atand(y,x)`), `mod(a,p)`,
+!  `modulo(a,p)`, `sign(a,b)`, `hypot(x,y)`
 !
 !  Elemental functions of two or more arguments: `max(a,b,...)`, `min(a,b,...)`
 !
@@ -59,23 +62,30 @@ integer, parameter, public :: fn_floor   = 20
 integer, parameter, public :: fn_ceiling = 21
 integer, parameter, public :: fn_nint    = 22
 integer, parameter, public :: fn_aint    = 23
-integer, parameter, public :: fn_last_elemental = fn_aint !! last of the one-argument elemental functions
-integer, parameter, public :: fn_atan2   = 24
-integer, parameter, public :: fn_mod     = 25
-integer, parameter, public :: fn_modulo  = 26
-integer, parameter, public :: fn_sign    = 27
-integer, parameter, public :: fn_hypot   = 28
-integer, parameter, public :: fn_max     = 29
-integer, parameter, public :: fn_min     = 30
-integer, parameter, public :: fn_sum     = 31
-integer, parameter, public :: fn_product = 32
-integer, parameter, public :: fn_norm2   = 33
-integer, parameter, public :: fn_maxval  = 34
-integer, parameter, public :: fn_minval  = 35
-integer, parameter, public :: fn_size    = 36
-integer, parameter, public :: fn_dot     = 37
-integer, parameter, public :: fn_cross   = 38
-integer, parameter, public :: fn_if      = 39
+integer, parameter, public :: fn_sind    = 24
+integer, parameter, public :: fn_cosd    = 25
+integer, parameter, public :: fn_tand    = 26
+integer, parameter, public :: fn_asind   = 27
+integer, parameter, public :: fn_acosd   = 28
+integer, parameter, public :: fn_atand   = 29
+integer, parameter, public :: fn_last_elemental = fn_atand !! last of the one-argument elemental functions
+integer, parameter, public :: fn_atan2   = 30
+integer, parameter, public :: fn_mod     = 31
+integer, parameter, public :: fn_modulo  = 32
+integer, parameter, public :: fn_sign    = 33
+integer, parameter, public :: fn_hypot   = 34
+integer, parameter, public :: fn_atan2d  = 35
+integer, parameter, public :: fn_max     = 36
+integer, parameter, public :: fn_min     = 37
+integer, parameter, public :: fn_sum     = 38
+integer, parameter, public :: fn_product = 39
+integer, parameter, public :: fn_norm2   = 40
+integer, parameter, public :: fn_maxval  = 41
+integer, parameter, public :: fn_minval  = 42
+integer, parameter, public :: fn_size    = 43
+integer, parameter, public :: fn_dot     = 44
+integer, parameter, public :: fn_cross   = 45
+integer, parameter, public :: fn_if      = 46
 
 type :: builtin_t
     !! information about a built-in function
@@ -97,7 +107,7 @@ type(builtin_t), dimension(*), parameter :: builtins = [ &
     builtin_t('tan',         fn_tan,     1, 1), &
     builtin_t('asin',        fn_asin,    1, 1), &
     builtin_t('acos',        fn_acos,    1, 1), &
-    builtin_t('atan',        fn_atan,    1, 1), &
+    builtin_t('atan',        fn_atan,    1, 2), &  ! atan(y,x) is atan2
     builtin_t('sinh',        fn_sinh,    1, 1), &
     builtin_t('cosh',        fn_cosh,    1, 1), &
     builtin_t('tanh',        fn_tanh,    1, 1), &
@@ -114,11 +124,18 @@ type(builtin_t), dimension(*), parameter :: builtins = [ &
     builtin_t('round',       fn_nint,    1, 1), &
     builtin_t('aint',        fn_aint,    1, 1), &
     builtin_t('trunc',       fn_aint,    1, 1), &
+    builtin_t('sind',        fn_sind,    1, 1), &
+    builtin_t('cosd',        fn_cosd,    1, 1), &
+    builtin_t('tand',        fn_tand,    1, 1), &
+    builtin_t('asind',       fn_asind,   1, 1), &
+    builtin_t('acosd',       fn_acosd,   1, 1), &
+    builtin_t('atand',       fn_atand,   1, 2), &  ! atand(y,x) is atan2d
     builtin_t('atan2',       fn_atan2,   2, 2), &
     builtin_t('mod',         fn_mod,     2, 2), &
     builtin_t('modulo',      fn_modulo,  2, 2), &
     builtin_t('sign',        fn_sign,    2, 2), &
     builtin_t('hypot',       fn_hypot,   2, 2), &
+    builtin_t('atan2d',      fn_atan2d,  2, 2), &
     builtin_t('max',         fn_max,     2, -1), &
     builtin_t('min',         fn_min,     2, -1), &
     builtin_t('sum',         fn_sum,     1, 1), &
